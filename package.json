@@ -1,0 +1,29 @@
+{
+  "name": "agent-ceo",
+  "version": "2.0.0",
+  "description": "Lead a team of AI agents from one terminal. Multi-agent chatroom orchestrator for Claude Code, Codex, and more.",
+  "main": "src/index.js",
+  "bin": {
+    "agent-ceo": "./bin/agent-ceo"
+  },
+  "scripts": {
+    "start": "node bin/agent-ceo",
+    "setup": "bash setup.sh",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "ai",
+    "claude",
+    "codex",
+    "multi-agent",
+    "terminal",
+    "tmux",
+    "orchestrator",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
