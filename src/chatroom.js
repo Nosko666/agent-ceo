@@ -6,6 +6,7 @@
 const readline = require('readline');
 
 const { C, printWelcome, printCeo, printAgent, printSystem, printWarning, printError, printDim, progressBar } = require('./display');
+const cmd = require('./commands');
 
 class Chatroom {
   constructor(agentManager, inboxManager, paneManager, capture, session, extras = {}) {
@@ -352,90 +353,56 @@ class Chatroom {
 
   async handleCommand(input) {
     const parts = input.slice(1).split(/\s+/);
-    const cmd = parts[0].toLowerCase();
+    const command = parts[0].toLowerCase();
     const args = parts.slice(1);
 
-    switch (cmd) {
-      case 'agents':
-        this.cmdAgents();
-        break;
+    const ctx = {
+      agentManager: this.agentManager,
+      inboxManager: this.inboxManager,
+      paneManager: this.paneManager,
+      capture: this.capture,
+      session: this.session,
+      privacy: this.privacy,
+      tokenTracker: this.tokenTracker,
+      tagManager: this.tagManager,
+      workflows: this.workflows,
+      chatroom: this,
+    };
 
-      case 'spawn':
-        this.cmdSpawn(args);
-        break;
-
-      case 'kill':
-        this.cmdKill(args);
-        break;
-
-      case 'revive':
-        this.cmdRevive(args);
-        break;
-
-      case 'rename':
-        this.cmdRename(args);
-        break;
+    switch (command) {
+      case 'agents':    cmd.cmdAgents(ctx); break;
+      case 'spawn':     cmd.cmdSpawn(ctx, args); break;
+      case 'kill':      cmd.cmdKill(ctx, args); break;
+      case 'revive':    cmd.cmdRevive(ctx, args); break;
+      case 'rename':    cmd.cmdRename(ctx, args); break;
 
       case 'dm':
         await this.handleDM(args[0], args.slice(1).join(' '));
         break;
 
-      case 'clear':
-        await this.cmdClear(args);
-        break;
+      case 'clear':     await cmd.cmdClear(ctx, args); break;
 
-      case 'group':
-        this.cmdGroup(args);
-        break;
+      case 'group':     cmd.cmdGroup(ctx, args); break;
+      case 'groups':    cmd.cmdGroups(ctx); break;
+      case 'ungroup':   cmd.cmdUngroup(ctx, args); break;
 
-      case 'groups':
-        this.cmdGroups();
-        break;
+      case 'pin':       cmd.cmdPin(ctx, args); break;
+      case 'pins':      cmd.cmdPins(ctx); break;
+      case 'unpin':     cmd.cmdUnpin(ctx, args); break;
 
-      case 'ungroup':
-        this.cmdUngroup(args);
-        break;
+      case 'mode':        cmd.cmdMode(ctx, args); break;
+      case 'transparent': cmd.cmdTransparent(ctx, args, true); break;
+      case 'private':     cmd.cmdTransparent(ctx, args, false); break;
+      case 'share':       await cmd.cmdShare(ctx, args); break;
 
-      case 'pin':
-        this.cmdPin(args);
-        break;
-
-      case 'pins':
-        this.cmdPins();
-        break;
-
-      case 'unpin':
-        this.cmdUnpin(args);
-        break;
-
-      case 'mode':
-        this.cmdMode(args);
-        break;
-
-      case 'transparent':
-        this.cmdTransparent(args, true);
-        break;
-
-      case 'private':
-        this.cmdTransparent(args, false);
-        break;
-
-      case 'share':
-        await this.cmdShare(args);
-        break;
-
-      case 'focus':
-        this.cmdFocus(args);
-        break;
+      case 'focus':     cmd.cmdFocus(ctx, args); break;
 
       case 'layout':
         this.paneManager.arrangeLayout();
         printSystem('Layout reset');
         break;
 
-      case 'save':
-        this.cmdSave();
-        break;
+      case 'save':      cmd.cmdSave(ctx); break;
 
       case 'session':
         if (args[0] === 'name' && args[1]) {
@@ -444,58 +411,22 @@ class Chatroom {
         }
         break;
 
-      case 'history':
-        this.cmdHistory();
-        break;
+      case 'history':   cmd.cmdHistory(ctx); break;
+      case 'tags':      cmd.cmdTags(ctx, args); break;
+      case 'tag':       cmd.cmdTagAction(ctx, args); break;
+      case 'tokens':    cmd.cmdTokens(ctx); break;
 
-      case 'tags':
-        this.cmdTags(args);
-        break;
+      // Phase 3: Workflows (cmdWorkflow stays in chatroom — uses this.sendToAgent)
+      case 'debate':    await this.cmdWorkflow('debate', args); break;
+      case 'plan':      await this.cmdWorkflow('plan', args); break;
+      case 'review':    await this.cmdWorkflow('review', args); break;
+      case 'research':  await this.cmdWorkflow('research', args); break;
 
-      case 'tag':
-        this.cmdTagAction(args);
-        break;
-
-      case 'tokens':
-        this.cmdTokens();
-        break;
-
-      // Phase 3: Workflows
-      case 'debate':
-        await this.cmdWorkflow('debate', args);
-        break;
-
-      case 'plan':
-        await this.cmdWorkflow('plan', args);
-        break;
-
-      case 'review':
-        await this.cmdWorkflow('review', args);
-        break;
-
-      case 'research':
-        await this.cmdWorkflow('research', args);
-        break;
-
-      case 'preset':
-        this.cmdPreset(args);
-        break;
-
-      case 'summarize':
-        this.cmdSummarize(args);
-        break;
-
-      case 'full':
-        this.cmdFull(args);
-        break;
-
-      case 'status':
-        this.cmdStatus();
-        break;
-
-      case 'help':
-        this.cmdHelp();
-        break;
+      case 'preset':    cmd.cmdPreset(ctx); break;
+      case 'summarize': cmd.cmdSummarize(ctx, args); break;
+      case 'full':      cmd.cmdFull(ctx, args); break;
+      case 'status':    cmd.cmdStatus(ctx); break;
+      case 'help':      cmd.cmdHelp(); break;
 
       case 'quit':
       case 'exit':
@@ -503,232 +434,7 @@ class Chatroom {
         break;
 
       default:
-        printError(`Unknown command: /${cmd}. Type /help for commands.`);
-    }
-  }
-
-  // ── Command implementations ────────────────────────────
-
-  cmdAgents() {
-    const agents = this.agentManager.list();
-    if (agents.length === 0) {
-      printSystem('No agents active.');
-      return;
-    }
-    printSystem('Active agents:');
-    for (const a of agents) {
-      const statusColor = a.status === 'idle' ? C.green
-        : a.status === 'running' ? C.yellow
-        : a.status === 'dead' ? C.red : C.dim;
-      const nameStr = a.displayName !== a.name ? `${a.name} (${a.displayName})` : a.name;
-      console.log(`  ${statusColor}◉${C.reset} ${nameStr} [${a.provider}] ${statusColor}${a.status}${C.reset} inbox:${a.inbox}`);
-    }
-  }
-
-  cmdSpawn(args) {
-    if (args.length === 0) {
-      printError('Usage: /spawn <provider> (e.g. /spawn claude)');
-      return;
-    }
-    const result = this.agentManager.spawn(args[0]);
-    if (result.error) {
-      printError(result.error);
-    } else {
-      this.paneManager.arrangeLayout();
-      printSystem(`Spawned ${result.name}`);
-    }
-  }
-
-  cmdKill(args) {
-    if (args.length === 0) {
-      printError('Usage: /kill <agent>');
-      return;
-    }
-    const result = this.agentManager.kill(args[0]);
-    if (result.error) {
-      printError(result.error);
-    } else {
-      printSystem(`Killed ${result.killed}`);
-    }
-  }
-
-  cmdRevive(args) {
-    if (args.length === 0) {
-      printError('Usage: /revive <agent>');
-      return;
-    }
-    const result = this.agentManager.revive(args[0]);
-    if (result.error) {
-      printError(result.error);
-    } else {
-      printSystem(`Reviving ${result.revived}...`);
-    }
-  }
-
-  cmdRename(args) {
-    if (args.length < 2) {
-      printError('Usage: /rename <agent> <newname>');
-      return;
-    }
-    const result = this.agentManager.rename(args[0], args[1]);
-    if (result.error) {
-      printError(result.error);
-    } else {
-      printSystem(`Renamed ${result.renamed} → @${result.to}`);
-    }
-  }
-
-  cmdGroup(args) {
-    if (args.length < 2) {
-      printError('Usage: /group <name> <agent1> <agent2> ...');
-      return;
-    }
-    const result = this.agentManager.createGroup(args[0], args.slice(1));
-    if (result.error) {
-      printError(result.error);
-    } else {
-      printSystem(`Group @${result.group}: ${result.members.join(', ')}`);
-    }
-  }
-
-  cmdGroups() {
-    const groups = this.agentManager.listGroups();
-    const keys = Object.keys(groups);
-    if (keys.length === 0) {
-      printSystem('No custom groups. Built-in: @all, @claudes, @codexes');
-      return;
-    }
-    printSystem('Custom groups:');
-    for (const [name, members] of Object.entries(groups)) {
-      console.log(`  @${name}: ${members.join(', ')}`);
-    }
-    console.log(`  ${C.dim}Built-in: @all, @claudes, @codexes${C.reset}`);
-  }
-
-  cmdUngroup(args) {
-    if (args.length === 0) {
-      printError('Usage: /ungroup <name>');
-      return;
-    }
-    const result = this.agentManager.removeGroup(args[0]);
-    if (result.error) printError(result.error);
-    else printSystem(`Removed group @${result.removed}`);
-  }
-
-  cmdPin(args) {
-    if (args.length === 0) {
-      printError('Usage: /pin <filepath>');
-      return;
-    }
-    const filePath = args.join(' ');
-    if (!require('fs').existsSync(filePath)) {
-      printError(`File not found: ${filePath}`);
-      return;
-    }
-    this.session.addFileReference(filePath);
-    printSystem(`📎 Pinned: ${filePath}`);
-  }
-
-  cmdPins() {
-    const files = [...this.session.filesReferenced];
-    if (files.length === 0) {
-      printSystem('No pinned files.');
-    } else {
-      printSystem('Pinned files:');
-      files.forEach(f => console.log(`  📎 ${f}`));
-    }
-  }
-
-  cmdUnpin(args) {
-    if (args.length === 0) return;
-    const filePath = args.join(' ');
-    this.session.filesReferenced.delete(filePath);
-    printSystem(`Unpinned: ${filePath}`);
-  }
-
-  cmdMode(args) {
-    if (!this.privacy) {
-      printError('Privacy module not loaded.');
-      return;
-    }
-    if (args.length < 2) {
-      printError('Usage: /mode <agent|all> <read|write>');
-      return;
-    }
-    const target = args[0].toLowerCase();
-    const mode = args[1].toLowerCase();
-
-    if (target === 'all') {
-      for (const [name] of this.agentManager.agents) {
-        this.privacy.setWriteMode(name, mode === 'write');
-      }
-      printSystem(`All agents set to ${mode.toUpperCase()} mode`);
-      return;
-    }
-
-    const resolved = this.agentManager.resolve(target);
-    if (!resolved) {
-      printError(`Agent not found: ${target}`);
-      return;
-    }
-    this.privacy.setWriteMode(resolved, mode === 'write');
-    printSystem(`${resolved} set to ${mode.toUpperCase()} mode`);
-  }
-
-  cmdTransparent(args, value) {
-    if (!this.privacy) return;
-    if (args.length === 0) {
-      printError(`Usage: /${value ? 'transparent' : 'private'} <agent>`);
-      return;
-    }
-    const result = this.privacy.setTransparent(args[0], value);
-    if (result.error) {
-      printError(result.error);
-    } else {
-      printSystem(`${result.agent} is now ${value ? 'transparent (DM responses broadcast to all)' : 'private (DMs stay private until /share)'}`);
-    }
-  }
-
-  async cmdShare(args) {
-    if (!this.privacy) return;
-    // /share <agent> [last N | conclusion | summary | all]
-    if (args.length < 1) {
-      printError('Usage: /share <agent> [last N | conclusion | summary]');
-      return;
-    }
-    const resolved = this.agentManager.resolve(args[0]);
-    if (!resolved) {
-      printError(`Agent not found: ${args[0]}`);
-      return;
-    }
-
-    const mode = args[1] || 'conclusion';
-    let messages;
-
-    if (mode === 'conclusion') {
-      messages = this.privacy.getLastPrivateMessages(resolved, 1);
-    } else if (mode === 'summary') {
-      messages = this.privacy.getPrivateLog(resolved);
-    } else if (mode === 'all') {
-      messages = this.privacy.getPrivateLog(resolved);
-    } else if (mode === 'last') {
-      const n = parseInt(args[2], 10) || 3;
-      messages = this.privacy.getLastPrivateMessages(resolved, n);
-    } else {
-      messages = this.privacy.getLastPrivateMessages(resolved, 1);
-    }
-
-    if (!messages || messages.length === 0) {
-      printError(`No private conversation with ${resolved} to share.`);
-      return;
-    }
-
-    const formatted = this.privacy.formatForSharing(messages, resolved, mode);
-    if (formatted) {
-      this.session.logMessage(resolved, formatted);
-      this.inboxManager.pushToAll(resolved, formatted, resolved);
-      printSystem(`Shared ${mode} from ${resolved}'s private chat to chatroom`);
-      console.log(`${C.dim}${formatted}${C.reset}`);
+        printError(`Unknown command: /${command}. Type /help for commands.`);
     }
   }
 
@@ -787,295 +493,6 @@ class Chatroom {
       printError(result.error);
     }
   }
-
-  cmdPreset() {
-    if (!this.workflows) return;
-    const presets = this.workflows.listPresets();
-    printSystem('Available workflows:');
-    for (const p of presets) {
-      console.log(`  ${p.name} — ${p.description}`);
-    }
-  }
-
-  // ── Phase 3: Tag actions ───────────────────────────────
-
-  cmdTagAction(args) {
-    if (!this.tagManager) return;
-    if (args.length === 0) {
-      printError('Usage: /tag list | /tag confirm [n] | /tag dismiss [n]');
-      return;
-    }
-
-    if (args[0] === 'list') {
-      const suggestions = this.tagManager.peekPendingSuggestions();
-      if (suggestions.length === 0) {
-        printSystem('No pending tag suggestions.');
-        return;
-      }
-      printSystem('Pending tag suggestions:');
-      suggestions.forEach((s, i) => {
-        console.log(`  ${i + 1}. #${s.tag} (from ${s.agentName}) — ${s.text}`);
-      });
-      return;
-    }
-
-    if (args[0] === 'confirm') {
-      const idx = args[1] ? parseInt(args[1], 10) - 1 : 0;
-      const suggestions = this.tagManager.peekPendingSuggestions();
-      if (suggestions.length === 0) {
-        printSystem('No pending tag suggestions.');
-        return;
-      }
-      const confirmed = this.tagManager.confirmSuggestion(idx);
-      if (confirmed) {
-        printSystem(`Tag confirmed: #${confirmed.tag} (suggested by ${confirmed.agentName})`);
-      } else {
-        printError(`Invalid index. Use /tag list to see pending suggestions.`);
-      }
-    } else if (args[0] === 'dismiss') {
-      const idx = args[1] ? parseInt(args[1], 10) - 1 : 0;
-      const dismissed = this.tagManager.dismissSuggestion(idx);
-      if (dismissed) {
-        printSystem(`Dismissed tag: #${dismissed.tag}`);
-      } else {
-        printSystem('No pending tag suggestions.');
-      }
-    }
-  }
-
-  cmdTokens() {
-    if (!this.tokenTracker) {
-      // Fallback: show byte counts
-      for (const [name, pane] of this.paneManager.panes) {
-        const kb = (pane.byteOffset / 1024).toFixed(1);
-        console.log(`  ${name}: ~${kb}KB captured`);
-      }
-      return;
-    }
-
-    const stats = this.tokenTracker.allStats();
-    printSystem('Token usage (estimated):');
-    console.log();
-    for (const s of stats) {
-      const bar = progressBar(s.percent, 20);
-      const color = s.percent >= 80 ? C.red : s.percent >= 50 ? C.yellow : C.green;
-      console.log(`  ${s.displayName.padEnd(12)} ${color}${bar}${C.reset} ${s.tokens.toLocaleString()} / ${(s.limit/1000).toFixed(0)}k tokens (${s.percent}%)`);
-      console.log(`  ${' '.repeat(12)} sent: ~${s.sent.toLocaleString()}  received: ~${s.received.toLocaleString()}`);
-    }
-    console.log();
-  }
-
-
-  cmdSummarize(args) {
-    if (args.length === 0) {
-      printError('Usage: /summarize <agent> — asks agent to self-summarize, then restarts with summary');
-      return;
-    }
-    const resolved = this.agentManager.resolve(args[0]);
-    if (!resolved) {
-      printError(`Agent not found: ${args[0]}`);
-      return;
-    }
-    // Send summarize request to agent
-    this.inboxManager.pushTo(resolved, 'system',
-      'Summarize everything we have discussed so far in a concise format. ' +
-      'Include: key findings, decisions made, open questions, and current status. ' +
-      'This summary will be used to continue the work in a fresh session.');
-    printSystem(`Asked ${resolved} to summarize. After it responds, use /clear ${resolved} to restart it with the summary.`);
-  }
-
-  async cmdClear(args) {
-    if (args.length === 0) {
-      printError('Usage: /clear <agent> — restart agent session, seed with last summary');
-      return;
-    }
-    const resolved = this.agentManager.resolve(args[0]);
-    if (!resolved) {
-      printError(`Agent not found: ${args[0]}`);
-      return;
-    }
-
-    // Grab the last response from this agent as the summary
-    const lastResponse = this.session.chatLog.filter(e => e.from === resolved).pop();
-    const summary = lastResponse ? lastResponse.text : null;
-
-    // Clear stale inbox before restarting (prevents processing old queued messages)
-    this.inboxManager.clear(resolved);
-
-    // Revive the agent (restarts its CLI session, truncates log file)
-    const result = this.agentManager.revive(resolved);
-    if (result.error) {
-      printError(result.error);
-      return;
-    }
-
-    // Reset token tracking
-    if (this.tokenTracker) {
-      this.tokenTracker.sent[resolved] = 0;
-      this.tokenTracker.received[resolved] = 0;
-    }
-
-    // Wait for agent to start up
-    const agent = this.agentManager.agents.get(resolved);
-    const provider = this.agentManager.providers[agent.provider];
-    printSystem(`Restarting ${resolved}...`);
-    await new Promise(r => setTimeout(r, provider.startupDelay));
-    this.agentManager.setStatus(resolved, 'idle');
-
-    // Seed with summary if available
-    if (summary) {
-      this.inboxManager.pushTo(resolved, 'system',
-        `[Previous session summary]\n${summary}\n[End of summary — fresh session started]`);
-      printSystem(`${resolved} restarted and seeded with summary. @${resolved} to continue.`);
-    } else {
-      printSystem(`${resolved} restarted with clean slate.`);
-    }
-  }
-
-  cmdFull(args) {
-    if (args.length === 0) {
-      printError('Usage: /full <agent> — show full last response');
-      return;
-    }
-    const resolved = this.agentManager.resolve(args[0]);
-    if (!resolved) {
-      printError(`Agent not found: ${args[0]}`);
-      return;
-    }
-    const lastResponse = this.session.chatLog.filter(e => e.from === resolved).pop();
-    if (lastResponse) {
-      printAgent(this.agentManager.displayName(resolved) + ' (full)', lastResponse.text, this.agentManager.agents.get(resolved)?.provider);
-    } else {
-      printSystem(`No responses from ${resolved} yet.`);
-    }
-  }
-
-  cmdStatus() {
-    // Combined status view
-    const agents = this.agentManager.list();
-    console.log();
-    for (const a of agents) {
-      const statusColor = a.status === 'idle' ? C.green
-        : a.status === 'running' ? C.yellow
-        : a.status === 'dead' ? C.red : C.dim;
-
-      let extra = '';
-      if (this.privacy) {
-        if (this.privacy.isTransparent(a.name)) extra += ' [transparent]';
-        if (this.privacy.hasWriteMode(a.name)) extra += ` ${C.red}[WRITE]${C.reset}`;
-      }
-      if (this.tokenTracker) {
-        const pct = this.tokenTracker.usagePercent(a.name);
-        extra += ` ctx:${pct}%`;
-      }
-
-      console.log(`  ${statusColor}◉${C.reset} ${a.displayName.padEnd(12)} [${a.provider}] ${statusColor}${a.status.padEnd(8)}${C.reset} inbox:${a.inbox}${extra}`);
-    }
-    if (this.tokenTracker) {
-      console.log();
-      console.log(`  ${C.dim}${this.tokenTracker.statusBar()}${C.reset}`);
-    }
-    console.log();
-  }
-
-  cmdFocus(args) {
-    if (args.length === 0) {
-      this.paneManager.focusChatroom();
-      return;
-    }
-    const resolved = this.agentManager.resolve(args[0]);
-    if (resolved) {
-      this.paneManager.focusPane(resolved);
-    } else {
-      printError(`Agent not found: ${args[0]}`);
-    }
-  }
-
-  cmdSave() {
-    const dir = this.session.save(this.agentManager, this.inboxManager, this.privacy);
-    printSystem(`Session saved to: ${dir}`);
-  }
-
-  cmdHistory() {
-    const last10 = this.session.chatLog.slice(-10);
-    if (last10.length === 0) {
-      printSystem('No messages yet.');
-      return;
-    }
-    printSystem('Last 10 messages:');
-    for (const entry of last10) {
-      const time = new Date(entry.timestamp).toLocaleTimeString();
-      const preview = entry.text.substring(0, 100).replace(/\n/g, ' ');
-      console.log(`  ${C.dim}${time}${C.reset} ${C.bold}${entry.from}${C.reset}: ${preview}`);
-    }
-  }
-
-  cmdTags(args) {
-    const tags = this.session.searchTags(args[0] || null);
-    if (tags.length === 0) {
-      printSystem('No tags found.');
-      return;
-    }
-    for (const t of tags) {
-      const time = new Date(t.timestamp).toLocaleTimeString();
-      console.log(`  ${C.yellow}#${t.tag}${C.reset} ${C.dim}${time}${C.reset} ${t.text.substring(0, 80)}`);
-    }
-  }
-
-  cmdHelp() {
-    console.log(`
-${C.bold}${C.cyan}=== agent-ceo v1.0 ===${C.reset}
-
-${C.bold}Addressing:${C.reset}
-  @agent message        Talk to one agent
-  @all message          All agents respond
-  @claudes / @codexes   Provider groups
-  @mygroup message      Custom group
-  @agent:stop           Stop mid-response
-  @agent:write msg      One-time write permission
-  @agent:dm msg         Private DM (others won't see)
-  plain text            Queued silently for all
-
-${C.bold}Agents:${C.reset}
-  /agents  /spawn  /kill  /revive  /rename  /status  /clear
-
-${C.bold}Groups:${C.reset}
-  /group <name> a1 a2   Create    /ungroup  /groups
-
-${C.bold}Privacy & Modes:${C.reset}
-  /dm <agent> <msg>          Private DM (same as @agent:dm)
-  /mode <agent> write|read   Persistent write toggle
-  /transparent <agent>       DM responses also broadcast
-  /private <agent>           DM stays private until /share
-  /share <agent> [mode]      Share private to chatroom
-    modes: conclusion, summary, last N, all
-
-${C.bold}Workflows:${C.reset}
-  /debate [agents] [topic]   Cross-critique
-  /plan <a1> <a2> <topic>    Architect + critic
-  /review <a1> <a2> <task>   Implement + review
-  /research [agents] <topic> Parallel investigation
-  /preset                    List available workflows
-
-${C.bold}Files:${C.reset}  /pin  /unpin  /pins
-
-${C.bold}Tags:${C.reset}
-  #decision #todo #rejected  Manual tags in messages
-  /tags [filter]             Search tags
-  /tag list                  Show pending suggestions
-  /tag confirm [n]           Confirm suggestion
-  /tag dismiss [n]           Dismiss suggestion
-
-${C.bold}Session:${C.reset}
-  /session name <n>  /save  /history  /tokens
-  /summarize <agent>  /clear <agent>  /full <agent>
-
-${C.bold}Layout:${C.reset}  /focus [agent]   /layout
-
-${C.bold}Other:${C.reset}   /help   /quit
-`);
-  }
-
 
   // ── Shutdown ───────────────────────────────────────────
 
