@@ -5,20 +5,7 @@
 // ─────────────────────────────────────────────────────────
 const readline = require('readline');
 
-// Colors for terminal output
-const C = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
-  cyan: '\x1b[36m',
-  white: '\x1b[37m',
-  orange: '\x1b[38;5;208m',
-};
+const { C, printWelcome, printCeo, printAgent, printSystem, printWarning, printError, printDim, progressBar } = require('./display');
 
 class Chatroom {
   constructor(agentManager, inboxManager, paneManager, capture, session, extras = {}) {
@@ -33,6 +20,7 @@ class Chatroom {
     this.privacy = extras.privacy || null;
     this.rl = null;
     this.running = false;
+    this._shuttingDown = false;
     this.healthCheckInterval = null;
     this.autoSaveInterval = null;
     this.tokenWarningInterval = null;
@@ -48,7 +36,7 @@ class Chatroom {
       prompt: `${C.bold}${C.cyan}CEO ▸ ${C.reset}`,
     });
 
-    this.printWelcome();
+    printWelcome(this.agentManager.list());
     this.rl.prompt();
 
     this.rl.on('line', async (line) => {
@@ -69,7 +57,7 @@ class Chatroom {
     this.healthCheckInterval = setInterval(() => {
       const dead = this.agentManager.checkHealth();
       for (const name of dead) {
-        this.printSystem(`⚠️  ${name} disconnected. /revive ${name} to restart.`);
+        printSystem(`⚠️  ${name} disconnected. /revive ${name} to restart.`);
       }
     }, 10000);
 
@@ -83,7 +71,7 @@ class Chatroom {
       if (this.tokenTracker) {
         const warnings = this.tokenTracker.getWarnings();
         for (const w of warnings) {
-          if (w.level === 'critical') this.printWarning(w.message);
+          if (w.level === 'critical') printWarning(w.message);
         }
       }
     }, 60000);
@@ -110,15 +98,15 @@ class Chatroom {
     if (input.startsWith('#')) {
       this.session.logMessage('ceo', input);
       this.inboxManager.pushToAll('ceo', input);
-      this.printCeo(input);
+      printCeo(input);
       return;
     }
 
     // Plain message — goes to all inboxes, nobody responds
     this.session.logMessage('ceo', input);
     this.inboxManager.pushToAll('ceo', input);
-    this.printCeo(input);
-    this.printDim('  (message queued for all agents)');
+    printCeo(input);
+    printDim('  (message queued for all agents)');
   }
 
   // ── @ Mention routing ──────────────────────────────────
@@ -152,7 +140,7 @@ class Chatroom {
       if (group && group.length > 0) {
         agents = group;
       } else {
-        this.printError(`Unknown agent or group: @${target}`);
+        printError(`Unknown agent or group: @${target}`);
         return;
       }
     }
@@ -160,14 +148,14 @@ class Chatroom {
     // Check if any are still running
     const busy = agents.filter(a => this.agentManager.getStatus(a) === 'running');
     if (busy.length > 0) {
-      this.printWarning(`Still responding: ${busy.join(', ')}. Wait or @${busy[0]}:stop first.`);
+      printWarning(`Still responding: ${busy.join(', ')}. Wait or @${busy[0]}:stop first.`);
       return;
     }
 
     // Check for dead agents
     const dead = agents.filter(a => this.agentManager.getStatus(a) === 'dead');
     if (dead.length > 0) {
-      this.printWarning(`Dead agents: ${dead.join(', ')}. /revive them first.`);
+      printWarning(`Dead agents: ${dead.join(', ')}. /revive them first.`);
       agents = agents.filter(a => !dead.includes(a));
       if (agents.length === 0) return;
     }
@@ -181,7 +169,7 @@ class Chatroom {
       this.inboxManager.pushTo(agentName, 'ceo', fullMsg);
     }
 
-    this.printCeo(`@${target} ${fullMsg}`);
+    printCeo(`@${target} ${fullMsg}`);
 
     // Send to all agents in parallel
     const promises = agents.map(a => this.sendToAgent(a, writeMode));
@@ -194,13 +182,13 @@ class Chatroom {
     // Flush inbox
     const prompt = this.inboxManager.flush(agentName);
     if (!prompt) {
-      this.printDim(`  ${displayName} has nothing new to read.`);
+      printDim(`  ${displayName} has nothing new to read.`);
       return;
     }
 
     // Mark as running
     this.agentManager.setStatus(agentName, 'running');
-    this.printDim(`  ◉ ${displayName} thinking...`);
+    printDim(`  ◉ ${displayName} thinking...`);
 
     // Check persistent write mode from privacy manager
     const hasWriteMode = writeMode || (this.privacy && this.privacy.hasWriteMode(agentName));
@@ -251,7 +239,7 @@ class Chatroom {
     this.agentManager.setStatus(agentName, 'idle');
 
     if (result.timedOut) {
-      this.printWarning(`${displayName} timed out. Partial response captured.`);
+      printWarning(`${displayName} timed out. Partial response captured.`);
     }
 
     if (result.text) {
@@ -263,7 +251,7 @@ class Chatroom {
         const suggestions = this.tagManager.extractSuggestions(agentName, result.text);
         for (const s of suggestions) {
           this.tagManager.addSuggestion(s);
-          this.printDim(`  💡 ${displayName} suggests: #${s.tag} — /tag confirm or /tag dismiss`);
+          printDim(`  💡 ${displayName} suggests: #${s.tag} — /tag confirm or /tag dismiss`);
         }
       }
 
@@ -273,7 +261,7 @@ class Chatroom {
         : result.text;
 
       const tag = result.partial ? `${displayName} — PARTIAL` : displayName;
-      this.printAgent(tag, display, agentName);
+      printAgent(tag, display, this.agentManager.agents.get(agentName)?.provider);
 
       // Log to session (shared log for all, private log for DMs)
       if (privateMode && this.privacy) {
@@ -287,12 +275,12 @@ class Chatroom {
         // In private mode, only broadcast if agent is transparent
         if (this.privacy && this.privacy.isTransparent(agentName)) {
           this.inboxManager.pushToAll(agentName, result.text, agentName);
-          this.printDim(`  (${displayName} is transparent — response broadcast to all)`);
+          printDim(`  (${displayName} is transparent — response broadcast to all)`);
         }
       } else {
         this.inboxManager.pushToAll(agentName, result.text, agentName);
         if (this.privacy && this.privacy.isTransparent(agentName)) {
-          this.printDim(`  (${displayName} is transparent — all agents can see its pane)`);
+          printDim(`  (${displayName} is transparent — all agents can see its pane)`);
         }
       }
 
@@ -301,11 +289,11 @@ class Chatroom {
         const percent = this.tokenTracker.usagePercent(agentName);
         if (percent >= 50) {
           const color = percent >= 80 ? C.red : C.yellow;
-          this.printDim(`  ${color}context: ~${percent}%${C.reset}`);
+          printDim(`  ${color}context: ~${percent}%${C.reset}`);
         }
       }
     } else {
-      this.printDim(`  ${displayName} produced no output.`);
+      printDim(`  ${displayName} produced no output.`);
     }
   }
 
@@ -325,7 +313,7 @@ class Chatroom {
         if (pane) {
           require('child_process').execSync(`tmux send-keys -t ${pane.paneId} C-c`);
           this.agentManager.setStatus(name, 'idle');
-          this.printSystem(`Stopped ${name}`);
+          printSystem(`Stopped ${name}`);
         }
       } catch { /* ignore */ }
     }
@@ -336,12 +324,12 @@ class Chatroom {
   async handleDM(target, message) {
     const resolved = this.agentManager.resolve(target);
     if (!resolved) {
-      this.printError(`Agent not found: ${target}`);
+      printError(`Agent not found: ${target}`);
       return;
     }
 
     if (!message) {
-      this.printError('DM needs a message: @agent:dm <message> or /dm agent <message>');
+      printError('DM needs a message: @agent:dm <message> or /dm agent <message>');
       return;
     }
 
@@ -353,8 +341,8 @@ class Chatroom {
     // Push only to this agent — not to all inboxes
     this.inboxManager.pushTo(resolved, 'ceo', message);
 
-    this.printCeo(`@${this.agentManager.displayName(resolved)}:dm ${message}`);
-    this.printDim('  (private — other agents will not see this exchange)');
+    printCeo(`@${this.agentManager.displayName(resolved)}:dm ${message}`);
+    printDim('  (private — other agents will not see this exchange)');
 
     // Send and capture response in private mode
     await this.sendToAgent(resolved, false, true);
@@ -442,7 +430,7 @@ class Chatroom {
 
       case 'layout':
         this.paneManager.arrangeLayout();
-        this.printSystem('Layout reset');
+        printSystem('Layout reset');
         break;
 
       case 'save':
@@ -452,7 +440,7 @@ class Chatroom {
       case 'session':
         if (args[0] === 'name' && args[1]) {
           this.session.setName(args.slice(1).join('-'));
-          this.printSystem(`Session named: ${this.session.name}`);
+          printSystem(`Session named: ${this.session.name}`);
         }
         break;
 
@@ -515,7 +503,7 @@ class Chatroom {
         break;
 
       default:
-        this.printError(`Unknown command: /${cmd}. Type /help for commands.`);
+        printError(`Unknown command: /${cmd}. Type /help for commands.`);
     }
   }
 
@@ -524,10 +512,10 @@ class Chatroom {
   cmdAgents() {
     const agents = this.agentManager.list();
     if (agents.length === 0) {
-      this.printSystem('No agents active.');
+      printSystem('No agents active.');
       return;
     }
-    this.printSystem('Active agents:');
+    printSystem('Active agents:');
     for (const a of agents) {
       const statusColor = a.status === 'idle' ? C.green
         : a.status === 'running' ? C.yellow
@@ -539,67 +527,67 @@ class Chatroom {
 
   cmdSpawn(args) {
     if (args.length === 0) {
-      this.printError('Usage: /spawn <provider> (e.g. /spawn claude)');
+      printError('Usage: /spawn <provider> (e.g. /spawn claude)');
       return;
     }
     const result = this.agentManager.spawn(args[0]);
     if (result.error) {
-      this.printError(result.error);
+      printError(result.error);
     } else {
       this.paneManager.arrangeLayout();
-      this.printSystem(`Spawned ${result.name}`);
+      printSystem(`Spawned ${result.name}`);
     }
   }
 
   cmdKill(args) {
     if (args.length === 0) {
-      this.printError('Usage: /kill <agent>');
+      printError('Usage: /kill <agent>');
       return;
     }
     const result = this.agentManager.kill(args[0]);
     if (result.error) {
-      this.printError(result.error);
+      printError(result.error);
     } else {
-      this.printSystem(`Killed ${result.killed}`);
+      printSystem(`Killed ${result.killed}`);
     }
   }
 
   cmdRevive(args) {
     if (args.length === 0) {
-      this.printError('Usage: /revive <agent>');
+      printError('Usage: /revive <agent>');
       return;
     }
     const result = this.agentManager.revive(args[0]);
     if (result.error) {
-      this.printError(result.error);
+      printError(result.error);
     } else {
-      this.printSystem(`Reviving ${result.revived}...`);
+      printSystem(`Reviving ${result.revived}...`);
     }
   }
 
   cmdRename(args) {
     if (args.length < 2) {
-      this.printError('Usage: /rename <agent> <newname>');
+      printError('Usage: /rename <agent> <newname>');
       return;
     }
     const result = this.agentManager.rename(args[0], args[1]);
     if (result.error) {
-      this.printError(result.error);
+      printError(result.error);
     } else {
-      this.printSystem(`Renamed ${result.renamed} → @${result.to}`);
+      printSystem(`Renamed ${result.renamed} → @${result.to}`);
     }
   }
 
   cmdGroup(args) {
     if (args.length < 2) {
-      this.printError('Usage: /group <name> <agent1> <agent2> ...');
+      printError('Usage: /group <name> <agent1> <agent2> ...');
       return;
     }
     const result = this.agentManager.createGroup(args[0], args.slice(1));
     if (result.error) {
-      this.printError(result.error);
+      printError(result.error);
     } else {
-      this.printSystem(`Group @${result.group}: ${result.members.join(', ')}`);
+      printSystem(`Group @${result.group}: ${result.members.join(', ')}`);
     }
   }
 
@@ -607,10 +595,10 @@ class Chatroom {
     const groups = this.agentManager.listGroups();
     const keys = Object.keys(groups);
     if (keys.length === 0) {
-      this.printSystem('No custom groups. Built-in: @all, @claudes, @codexes');
+      printSystem('No custom groups. Built-in: @all, @claudes, @codexes');
       return;
     }
-    this.printSystem('Custom groups:');
+    printSystem('Custom groups:');
     for (const [name, members] of Object.entries(groups)) {
       console.log(`  @${name}: ${members.join(', ')}`);
     }
@@ -619,34 +607,34 @@ class Chatroom {
 
   cmdUngroup(args) {
     if (args.length === 0) {
-      this.printError('Usage: /ungroup <name>');
+      printError('Usage: /ungroup <name>');
       return;
     }
     const result = this.agentManager.removeGroup(args[0]);
-    if (result.error) this.printError(result.error);
-    else this.printSystem(`Removed group @${result.removed}`);
+    if (result.error) printError(result.error);
+    else printSystem(`Removed group @${result.removed}`);
   }
 
   cmdPin(args) {
     if (args.length === 0) {
-      this.printError('Usage: /pin <filepath>');
+      printError('Usage: /pin <filepath>');
       return;
     }
     const filePath = args.join(' ');
     if (!require('fs').existsSync(filePath)) {
-      this.printError(`File not found: ${filePath}`);
+      printError(`File not found: ${filePath}`);
       return;
     }
     this.session.addFileReference(filePath);
-    this.printSystem(`📎 Pinned: ${filePath}`);
+    printSystem(`📎 Pinned: ${filePath}`);
   }
 
   cmdPins() {
     const files = [...this.session.filesReferenced];
     if (files.length === 0) {
-      this.printSystem('No pinned files.');
+      printSystem('No pinned files.');
     } else {
-      this.printSystem('Pinned files:');
+      printSystem('Pinned files:');
       files.forEach(f => console.log(`  📎 ${f}`));
     }
   }
@@ -655,16 +643,16 @@ class Chatroom {
     if (args.length === 0) return;
     const filePath = args.join(' ');
     this.session.filesReferenced.delete(filePath);
-    this.printSystem(`Unpinned: ${filePath}`);
+    printSystem(`Unpinned: ${filePath}`);
   }
 
   cmdMode(args) {
     if (!this.privacy) {
-      this.printError('Privacy module not loaded.');
+      printError('Privacy module not loaded.');
       return;
     }
     if (args.length < 2) {
-      this.printError('Usage: /mode <agent|all> <read|write>');
+      printError('Usage: /mode <agent|all> <read|write>');
       return;
     }
     const target = args[0].toLowerCase();
@@ -674,30 +662,30 @@ class Chatroom {
       for (const [name] of this.agentManager.agents) {
         this.privacy.setWriteMode(name, mode === 'write');
       }
-      this.printSystem(`All agents set to ${mode.toUpperCase()} mode`);
+      printSystem(`All agents set to ${mode.toUpperCase()} mode`);
       return;
     }
 
     const resolved = this.agentManager.resolve(target);
     if (!resolved) {
-      this.printError(`Agent not found: ${target}`);
+      printError(`Agent not found: ${target}`);
       return;
     }
     this.privacy.setWriteMode(resolved, mode === 'write');
-    this.printSystem(`${resolved} set to ${mode.toUpperCase()} mode`);
+    printSystem(`${resolved} set to ${mode.toUpperCase()} mode`);
   }
 
   cmdTransparent(args, value) {
     if (!this.privacy) return;
     if (args.length === 0) {
-      this.printError(`Usage: /${value ? 'transparent' : 'private'} <agent>`);
+      printError(`Usage: /${value ? 'transparent' : 'private'} <agent>`);
       return;
     }
     const result = this.privacy.setTransparent(args[0], value);
     if (result.error) {
-      this.printError(result.error);
+      printError(result.error);
     } else {
-      this.printSystem(`${result.agent} is now ${value ? 'transparent (DM responses broadcast to all)' : 'private (DMs stay private until /share)'}`);
+      printSystem(`${result.agent} is now ${value ? 'transparent (DM responses broadcast to all)' : 'private (DMs stay private until /share)'}`);
     }
   }
 
@@ -705,12 +693,12 @@ class Chatroom {
     if (!this.privacy) return;
     // /share <agent> [last N | conclusion | summary | all]
     if (args.length < 1) {
-      this.printError('Usage: /share <agent> [last N | conclusion | summary]');
+      printError('Usage: /share <agent> [last N | conclusion | summary]');
       return;
     }
     const resolved = this.agentManager.resolve(args[0]);
     if (!resolved) {
-      this.printError(`Agent not found: ${args[0]}`);
+      printError(`Agent not found: ${args[0]}`);
       return;
     }
 
@@ -731,7 +719,7 @@ class Chatroom {
     }
 
     if (!messages || messages.length === 0) {
-      this.printError(`No private conversation with ${resolved} to share.`);
+      printError(`No private conversation with ${resolved} to share.`);
       return;
     }
 
@@ -739,7 +727,7 @@ class Chatroom {
     if (formatted) {
       this.session.logMessage(resolved, formatted);
       this.inboxManager.pushToAll(resolved, formatted, resolved);
-      this.printSystem(`Shared ${mode} from ${resolved}'s private chat to chatroom`);
+      printSystem(`Shared ${mode} from ${resolved}'s private chat to chatroom`);
       console.log(`${C.dim}${formatted}${C.reset}`);
     }
   }
@@ -748,7 +736,7 @@ class Chatroom {
 
   async cmdWorkflow(type, args) {
     if (!this.workflows) {
-      this.printError('Workflows module not loaded.');
+      printError('Workflows module not loaded.');
       return;
     }
 
@@ -796,14 +784,14 @@ class Chatroom {
     }
 
     if (result && result.error) {
-      this.printError(result.error);
+      printError(result.error);
     }
   }
 
   cmdPreset() {
     if (!this.workflows) return;
     const presets = this.workflows.listPresets();
-    this.printSystem('Available workflows:');
+    printSystem('Available workflows:');
     for (const p of presets) {
       console.log(`  ${p.name} — ${p.description}`);
     }
@@ -814,17 +802,17 @@ class Chatroom {
   cmdTagAction(args) {
     if (!this.tagManager) return;
     if (args.length === 0) {
-      this.printError('Usage: /tag list | /tag confirm [n] | /tag dismiss [n]');
+      printError('Usage: /tag list | /tag confirm [n] | /tag dismiss [n]');
       return;
     }
 
     if (args[0] === 'list') {
       const suggestions = this.tagManager.peekPendingSuggestions();
       if (suggestions.length === 0) {
-        this.printSystem('No pending tag suggestions.');
+        printSystem('No pending tag suggestions.');
         return;
       }
-      this.printSystem('Pending tag suggestions:');
+      printSystem('Pending tag suggestions:');
       suggestions.forEach((s, i) => {
         console.log(`  ${i + 1}. #${s.tag} (from ${s.agentName}) — ${s.text}`);
       });
@@ -835,22 +823,22 @@ class Chatroom {
       const idx = args[1] ? parseInt(args[1], 10) - 1 : 0;
       const suggestions = this.tagManager.peekPendingSuggestions();
       if (suggestions.length === 0) {
-        this.printSystem('No pending tag suggestions.');
+        printSystem('No pending tag suggestions.');
         return;
       }
       const confirmed = this.tagManager.confirmSuggestion(idx);
       if (confirmed) {
-        this.printSystem(`Tag confirmed: #${confirmed.tag} (suggested by ${confirmed.agentName})`);
+        printSystem(`Tag confirmed: #${confirmed.tag} (suggested by ${confirmed.agentName})`);
       } else {
-        this.printError(`Invalid index. Use /tag list to see pending suggestions.`);
+        printError(`Invalid index. Use /tag list to see pending suggestions.`);
       }
     } else if (args[0] === 'dismiss') {
       const idx = args[1] ? parseInt(args[1], 10) - 1 : 0;
       const dismissed = this.tagManager.dismissSuggestion(idx);
       if (dismissed) {
-        this.printSystem(`Dismissed tag: #${dismissed.tag}`);
+        printSystem(`Dismissed tag: #${dismissed.tag}`);
       } else {
-        this.printSystem('No pending tag suggestions.');
+        printSystem('No pending tag suggestions.');
       }
     }
   }
@@ -866,10 +854,10 @@ class Chatroom {
     }
 
     const stats = this.tokenTracker.allStats();
-    this.printSystem('Token usage (estimated):');
+    printSystem('Token usage (estimated):');
     console.log();
     for (const s of stats) {
-      const bar = this._progressBar(s.percent, 20);
+      const bar = progressBar(s.percent, 20);
       const color = s.percent >= 80 ? C.red : s.percent >= 50 ? C.yellow : C.green;
       console.log(`  ${s.displayName.padEnd(12)} ${color}${bar}${C.reset} ${s.tokens.toLocaleString()} / ${(s.limit/1000).toFixed(0)}k tokens (${s.percent}%)`);
       console.log(`  ${' '.repeat(12)} sent: ~${s.sent.toLocaleString()}  received: ~${s.received.toLocaleString()}`);
@@ -877,20 +865,15 @@ class Chatroom {
     console.log();
   }
 
-  _progressBar(percent, width) {
-    const filled = Math.round((percent / 100) * width);
-    const empty = width - filled;
-    return '█'.repeat(filled) + '░'.repeat(empty);
-  }
 
   cmdSummarize(args) {
     if (args.length === 0) {
-      this.printError('Usage: /summarize <agent> — asks agent to self-summarize, then restarts with summary');
+      printError('Usage: /summarize <agent> — asks agent to self-summarize, then restarts with summary');
       return;
     }
     const resolved = this.agentManager.resolve(args[0]);
     if (!resolved) {
-      this.printError(`Agent not found: ${args[0]}`);
+      printError(`Agent not found: ${args[0]}`);
       return;
     }
     // Send summarize request to agent
@@ -898,17 +881,17 @@ class Chatroom {
       'Summarize everything we have discussed so far in a concise format. ' +
       'Include: key findings, decisions made, open questions, and current status. ' +
       'This summary will be used to continue the work in a fresh session.');
-    this.printSystem(`Asked ${resolved} to summarize. After it responds, use /clear ${resolved} to restart it with the summary.`);
+    printSystem(`Asked ${resolved} to summarize. After it responds, use /clear ${resolved} to restart it with the summary.`);
   }
 
   async cmdClear(args) {
     if (args.length === 0) {
-      this.printError('Usage: /clear <agent> — restart agent session, seed with last summary');
+      printError('Usage: /clear <agent> — restart agent session, seed with last summary');
       return;
     }
     const resolved = this.agentManager.resolve(args[0]);
     if (!resolved) {
-      this.printError(`Agent not found: ${args[0]}`);
+      printError(`Agent not found: ${args[0]}`);
       return;
     }
 
@@ -922,7 +905,7 @@ class Chatroom {
     // Revive the agent (restarts its CLI session, truncates log file)
     const result = this.agentManager.revive(resolved);
     if (result.error) {
-      this.printError(result.error);
+      printError(result.error);
       return;
     }
 
@@ -935,7 +918,7 @@ class Chatroom {
     // Wait for agent to start up
     const agent = this.agentManager.agents.get(resolved);
     const provider = this.agentManager.providers[agent.provider];
-    this.printSystem(`Restarting ${resolved}...`);
+    printSystem(`Restarting ${resolved}...`);
     await new Promise(r => setTimeout(r, provider.startupDelay));
     this.agentManager.setStatus(resolved, 'idle');
 
@@ -943,27 +926,27 @@ class Chatroom {
     if (summary) {
       this.inboxManager.pushTo(resolved, 'system',
         `[Previous session summary]\n${summary}\n[End of summary — fresh session started]`);
-      this.printSystem(`${resolved} restarted and seeded with summary. @${resolved} to continue.`);
+      printSystem(`${resolved} restarted and seeded with summary. @${resolved} to continue.`);
     } else {
-      this.printSystem(`${resolved} restarted with clean slate.`);
+      printSystem(`${resolved} restarted with clean slate.`);
     }
   }
 
   cmdFull(args) {
     if (args.length === 0) {
-      this.printError('Usage: /full <agent> — show full last response');
+      printError('Usage: /full <agent> — show full last response');
       return;
     }
     const resolved = this.agentManager.resolve(args[0]);
     if (!resolved) {
-      this.printError(`Agent not found: ${args[0]}`);
+      printError(`Agent not found: ${args[0]}`);
       return;
     }
     const lastResponse = this.session.chatLog.filter(e => e.from === resolved).pop();
     if (lastResponse) {
-      this.printAgent(this.agentManager.displayName(resolved) + ' (full)', lastResponse.text, resolved);
+      printAgent(this.agentManager.displayName(resolved) + ' (full)', lastResponse.text, this.agentManager.agents.get(resolved)?.provider);
     } else {
-      this.printSystem(`No responses from ${resolved} yet.`);
+      printSystem(`No responses from ${resolved} yet.`);
     }
   }
 
@@ -1004,22 +987,22 @@ class Chatroom {
     if (resolved) {
       this.paneManager.focusPane(resolved);
     } else {
-      this.printError(`Agent not found: ${args[0]}`);
+      printError(`Agent not found: ${args[0]}`);
     }
   }
 
   cmdSave() {
     const dir = this.session.save(this.agentManager, this.inboxManager, this.privacy);
-    this.printSystem(`Session saved to: ${dir}`);
+    printSystem(`Session saved to: ${dir}`);
   }
 
   cmdHistory() {
     const last10 = this.session.chatLog.slice(-10);
     if (last10.length === 0) {
-      this.printSystem('No messages yet.');
+      printSystem('No messages yet.');
       return;
     }
-    this.printSystem('Last 10 messages:');
+    printSystem('Last 10 messages:');
     for (const entry of last10) {
       const time = new Date(entry.timestamp).toLocaleTimeString();
       const preview = entry.text.substring(0, 100).replace(/\n/g, ' ');
@@ -1030,7 +1013,7 @@ class Chatroom {
   cmdTags(args) {
     const tags = this.session.searchTags(args[0] || null);
     if (tags.length === 0) {
-      this.printSystem('No tags found.');
+      printSystem('No tags found.');
       return;
     }
     for (const t of tags) {
@@ -1094,61 +1077,13 @@ ${C.bold}Other:${C.reset}   /help   /quit
   }
 
 
-  // ── Output formatting ──────────────────────────────────
-
-  printWelcome() {
-    const agents = this.agentManager.list();
-    console.log(`
-${C.bold}${C.cyan}╭─────────────────────────────────────────╮
-│          ${C.white}agent-ceo${C.cyan}  v1.0.0              │
-│     You're the CEO. Lead your team.     │
-╰─────────────────────────────────────────╯${C.reset}
-`);
-    if (agents.length > 0) {
-      console.log(`${C.dim}  Team: ${agents.map(a =>
-        `${a.status === 'idle' ? C.green : C.yellow}◉${C.dim} ${a.displayName}`
-      ).join('  ')}${C.reset}`);
-    }
-    console.log(`${C.dim}  Type /help for commands. Use @agent to talk.${C.reset}`);
-    console.log();
-  }
-
-  printCeo(text) {
-    console.log(`${C.bold}${C.white}[CEO]${C.reset} ${text}`);
-  }
-
-  printAgent(label, text, agentName) {
-    const provider = this.agentManager.agents.get(agentName)?.provider;
-    const color = provider === 'claude' ? C.orange : provider === 'codex' ? C.cyan : C.magenta;
-    console.log();
-    console.log(`${color}${C.bold}┌─ ${label} ──────────────────────────${C.reset}`);
-    const lines = text.split('\n');
-    for (const line of lines) {
-      console.log(`${color}│${C.reset} ${line}`);
-    }
-    console.log(`${color}${C.bold}└──────────────────────────────────────${C.reset}`);
-    console.log();
-  }
-
-  printSystem(text) {
-    console.log(`${C.dim}[system]${C.reset} ${text}`);
-  }
-
-  printWarning(text) {
-    console.log(`${C.yellow}[warn]${C.reset} ${text}`);
-  }
-
-  printError(text) {
-    console.log(`${C.red}[error]${C.reset} ${text}`);
-  }
-
-  printDim(text) {
-    console.log(`${C.dim}${text}${C.reset}`);
-  }
-
   // ── Shutdown ───────────────────────────────────────────
 
   shutdown() {
+    // Guard against double shutdown (rl.close fires the 'close' event)
+    if (this._shuttingDown) return;
+    this._shuttingDown = true;
+
     this.running = false;
     if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
     if (this.autoSaveInterval) clearInterval(this.autoSaveInterval);
@@ -1165,7 +1100,10 @@ ${C.bold}${C.cyan}╭───────────────────�
     console.log(`${C.dim}Goodbye, CEO.${C.reset}\n`);
     if (this.rl) this.rl.close();
 
-    // Kill the tmux session (closes all agent panes)
+    // Clean up lock file BEFORE destroying tmux — destroySession() kills
+    // our own pane, so the process may die before process.exit() runs.
+    if (this.onShutdown) this.onShutdown();
+
     this.paneManager.destroySession();
     process.exit(0);
   }
