@@ -1,0 +1,114 @@
+const fs = require('fs');
+const path = require('path');
+
+// Per-type required fields (hard-fail on missing during replay)
+const EVENT_SCHEMAS = {
+  msg:              ['from', 'text'],
+  inbox_route:      ['msgSeq', 'to'],
+  inbox_flush:      ['agent'],
+  inbox_clear:      ['agent'],
+  inbox_drop:       ['agent', 'count'],
+  agent_session:    ['agent', 'sessionId'],
+  agent_spawn:      ['agent', 'provider'],
+  agent_kill:       ['agent'],
+  agent_revive:     ['agent'],
+  tag_add:          ['tag', 'text'],
+  tag_suggest:      ['agent', 'tag'],
+  mode_change:      ['agent', 'mode'],
+  pin_add:          ['path'],
+  pin_remove:       ['path'],
+  session_name:     ['name'],
+  group_create:     ['group', 'members'],
+  group_remove:     ['group'],
+  auto_start:       ['jobId', 'goal'],
+  auto_pause:       ['jobId', 'reason'],
+  auto_resume:      ['jobId'],
+  auto_complete:    ['jobId'],
+  auto_stop:        ['jobId'],
+  codex_marker_sent: ['agent', 'marker'],
+};
+
+const KNOWN_TYPES = new Set(Object.keys(EVENT_SCHEMAS));
+
+class Journal {
+  constructor(dir) {
+    this.dir = dir;
+    this.journalPath = path.join(dir, 'journal.ndjson');
+    this._seq = 0;
+    this._eventsSinceSnapshot = 0;
+
+    fs.mkdirSync(dir, { recursive: true });
+
+    if (fs.existsSync(this.journalPath)) {
+      const content = fs.readFileSync(this.journalPath, 'utf-8').trim();
+      if (content.length > 0) {
+        const lines = content.split('\n');
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const event = JSON.parse(lines[i]);
+            if (event.seq) { this._seq = event.seq; break; }
+          } catch { /* last line might be truncated */ }
+        }
+        this._eventsSinceSnapshot = lines.length;
+      }
+    }
+  }
+
+  get nextSeq() { return this._seq + 1; }
+  get eventCount() { return this._eventsSinceSnapshot; }
+  get journalSize() {
+    try { return fs.statSync(this.journalPath).size; } catch { return 0; }
+  }
+
+  append(event) {
+    this._seq += 1;
+    const entry = { seq: this._seq, t: Date.now(), ...event };
+    fs.appendFileSync(this.journalPath, JSON.stringify(entry) + '\n');
+    this._eventsSinceSnapshot += 1;
+    return this._seq;
+  }
+
+  replay(afterSeq = 0) {
+    if (!fs.existsSync(this.journalPath)) return [];
+    const content = fs.readFileSync(this.journalPath, 'utf-8').trim();
+    if (content.length === 0) return [];
+
+    const lines = content.split('\n');
+    const events = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.length === 0) continue;
+
+      let event;
+      try { event = JSON.parse(line); }
+      catch (e) {
+        if (i === lines.length - 1) break; // truncated last line OK
+        throw new Error(`Journal corrupt at line ${i + 1}: ${e.message}`);
+      }
+
+      if (!event.type || !KNOWN_TYPES.has(event.type)) {
+        throw new Error(`Unknown event type "${event.type}" at seq ${event.seq} (line ${i + 1}). Schema mismatch?`);
+      }
+
+      const requiredFields = EVENT_SCHEMAS[event.type];
+      for (const field of requiredFields) {
+        if (event[field] === undefined) {
+          throw new Error(`Missing required field "${field}" for event type "${event.type}" at seq ${event.seq} (line ${i + 1})`);
+        }
+      }
+
+      if (event.seq > afterSeq) events.push(event);
+    }
+    return events;
+  }
+
+  truncate() {
+    fs.writeFileSync(this.journalPath, '');
+    this._eventsSinceSnapshot = 0;
+  }
+
+  setSeq(seq) { this._seq = seq; }
+}
+
+module.exports = Journal;
