@@ -2,3 +2,5 @@ node_modules/
 /tmp/
 *.log
 .DS_Store
+PLAN.md
+docs/superpowers/
