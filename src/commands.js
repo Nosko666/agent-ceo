@@ -478,6 +478,34 @@ function cmdPreset(ctx) {
   }
 }
 
+// ── Detach ────────────────────────────────────────────────
+
+function cmdDetach(ctx) {
+  const { execSync } = require('child_process');
+
+  // Targeted detach: find this client's TTY
+  try {
+    const tty = execSync(
+      "tmux display-message -p '#{client_tty}' 2>/dev/null",
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    ).toString().trim();
+
+    if (tty) {
+      printSystem('Detaching...');
+      execSync(`tmux detach-client -t '${tty}' 2>/dev/null`);
+      return;
+    }
+  } catch { /* fallback */ }
+
+  // Fallback
+  try {
+    printSystem('Detaching...');
+    execSync('tmux detach-client 2>/dev/null');
+  } catch {
+    printWarning('Could not detach. Use Ctrl+B d to detach from tmux.');
+  }
+}
+
 // ── Help ──────────────────────────────────────────────────
 
 function cmdHelp() {
@@ -528,9 +556,9 @@ ${C.bold}Session:${C.reset}
   /session name <n>  /save  /history  /tokens
   /summarize <agent>  /clear <agent>  /full <agent>
 
-${C.bold}Layout:${C.reset}  /focus [agent]   /layout
+${C.bold}Layout:${C.reset}  /focus [agent]   /layout   /detach
 
-${C.bold}Other:${C.reset}   /help   /quit
+${C.bold}Other:${C.reset}   /help   /detach   /quit (confirms first)
 `);
 }
 
@@ -560,5 +588,6 @@ module.exports = {
   cmdFull,
   cmdStatus,
   cmdPreset,
+  cmdDetach,
   cmdHelp,
 };

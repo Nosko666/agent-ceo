@@ -536,10 +536,11 @@ class Chatroom {
       case 'full':      cmd.cmdFull(ctx, args); break;
       case 'status':    cmd.cmdStatus(ctx); break;
       case 'help':      cmd.cmdHelp(); break;
+      case 'detach':    cmd.cmdDetach(ctx); break;
 
       case 'quit':
       case 'exit':
-        this.shutdown();
+        await this.confirmAndShutdown();
         break;
 
       default:
@@ -622,6 +623,19 @@ class Chatroom {
       this.journal.writeSnapshot(state);
     } catch (e) {
       // Silent fail for periodic snapshots — don't crash the chatroom
+    }
+  }
+
+  // ── Quit confirmation ──────────────────────────────────
+
+  async confirmAndShutdown() {
+    const { prompt } = require('./menu');
+
+    const answer = await prompt('  Are you sure? This ends all agents. (y/N): ');
+    if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+      this.shutdown();
+    } else {
+      printSystem('Quit cancelled.');
     }
   }
 
