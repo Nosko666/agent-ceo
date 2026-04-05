@@ -693,6 +693,40 @@ async function main() {
     return;
   }
 
+  // Load config (early, so parse errors are caught before any menu logic)
+  const Config = require('./config');
+  const baseDir = path.join(require('os').homedir(), '.agent-ceo');
+  let config;
+  try {
+    config = Config.load(baseDir);
+  } catch (e) {
+    if (e.code === 'CONFIG_PARSE_ERROR') {
+      if (process.stdin.isTTY) {
+        const { prompt } = require('./menu');
+        console.error(`\n  Config file is invalid JSON: ${e.filePath}`);
+        console.error(`  ${e.cause.message}\n`);
+        const answer = await prompt('  [E]dit path  |  [R]eset to defaults  |  [Q]uit\n  > ');
+        const choice = (answer || 'q').toLowerCase();
+        if (choice === 'r') {
+          Config.resetConfig(baseDir);
+          console.log('  Config reset to defaults.\n');
+          config = Config.load(baseDir);
+        } else if (choice === 'e') {
+          console.log(`\n  Edit this file: ${e.filePath}\n`);
+          process.exit(1);
+        } else {
+          process.exit(1);
+        }
+      } else {
+        console.error(`Config parse error: ${e.filePath}`);
+        console.error(e.cause.message);
+        process.exit(1);
+      }
+    } else {
+      throw e;
+    }
+  }
+
   // Direct attach
   if (args.attach) {
     attachToSession(args.attach);
