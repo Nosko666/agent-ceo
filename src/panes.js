@@ -7,17 +7,17 @@ const fs = require('fs');
 const path = require('path');
 
 const SESSION_NAME = 'ceo';
-const LOG_DIR = '/tmp/agent-ceo';
 
 class PaneManager {
-  constructor() {
+  constructor(logDir) {
+    this.logDir = logDir || '/tmp/agent-ceo';
     this.panes = new Map(); // agentName → { paneId, logFile, provider }
     this.ensureLogDir();
   }
 
   ensureLogDir() {
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
+    if (!fs.existsSync(this.logDir)) {
+      fs.mkdirSync(this.logDir, { recursive: true });
     }
   }
 
@@ -87,7 +87,7 @@ class PaneManager {
   }
 
   createAgentPane(agentName, provider, direction = 'right', percent = 25) {
-    const logFile = path.join(LOG_DIR, `${agentName}.log`);
+    const logFile = path.join(this.logDir, `${agentName}.log`);
 
     // Clear old log
     fs.writeFileSync(logFile, '');

@@ -293,13 +293,14 @@ function launchInTmux(args) {
   } catch { /* ignore */ }
 
   // ── Create agent panes ───────────────────────────────
-  if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+  const sessionLogDir = path.join('/tmp/agent-ceo', sessionName);
+  fs.mkdirSync(sessionLogDir, { recursive: true });
 
   const agentPanes = {};
 
   for (const { name, provider: providerName } of agentList) {
     const provider = require(`./providers/${providerName}`);
-    const logFile = path.join(LOG_DIR, `${name}.log`);
+    const logFile = path.join(sessionLogDir, `${name}.log`);
     fs.writeFileSync(logFile, '');
 
     console.log(`  Spawning ${name}...`);
@@ -338,6 +339,7 @@ function launchInTmux(args) {
   // ── Save setup state for the chatroom process ────────
   const setupState = {
     sessionName,
+    sessionLogDir,
     pane0,
     agents: agentPanes,
     originalArgs: {
@@ -392,7 +394,7 @@ async function runChatroom(sessionId) {
   process.on('exit', releaseLock);
 
   // ── Initialize PaneManager with existing panes ───────
-  const paneManager = new PaneManager();
+  const paneManager = new PaneManager(setup.sessionLogDir);
   paneManager.restoreFromSetup(setup);
 
   // ── Initialize InboxManager ──────────────────────────
