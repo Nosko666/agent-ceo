@@ -204,22 +204,53 @@ class Chatroom {
   }
 
   async sendToAgent(agentName, writeMode = false, privateMode = false) {
-    const displayName = this.agentManager.displayName(agentName);
-
-    // Flush inbox
     const prompt = this.inboxManager.flush(agentName);
     if (!prompt) {
-      printDim(`  ${displayName} has nothing new to read.`);
+      printDim(`  ${this.agentManager.displayName(agentName)} has nothing new to read.`);
       return;
     }
 
+    // Journal the flush
     if (this.journal) {
       this.journal.append({ type: 'inbox_flush', agent: agentName });
     }
 
+    return this.sendAndCapture(agentName, prompt, { writeMode, privateMode });
+  }
+
+  /**
+   * Lower-level send + capture API with per-call options.
+   * Used by sendToAgent (interactive) and AutoRunner (Phase 4).
+   *
+   * @param {string} agentName
+   * @param {string} prompt - text to send to the agent
+   * @param {object} options
+   * @param {boolean} options.writeMode - append WRITE permission instruction
+   * @param {boolean} options.privateMode - don't broadcast response to other inboxes
+   * @param {string} options.display - 'full' | 'compact' | 'hidden'
+   * @param {string|string[]} options.broadcastTo - 'all' | [agent names] | 'none'
+   * @param {object} options.journalMeta - extra metadata for journal events (e.g. autoJobId, step, round, role)
+   * @returns {Promise<{text: string, partial: boolean, timedOut: boolean}>}
+   */
+  async sendAndCapture(agentName, prompt, options = {}) {
+    const {
+      writeMode = false,
+      privateMode = false,
+      display: displayMode = 'full',
+      broadcastTo = 'all',
+      journalMeta = null,
+    } = options;
+
+    const displayName = this.agentManager.displayName(agentName);
+
     // Mark as running
     this.agentManager.setStatus(agentName, 'running');
-    printDim(`  ◉ ${displayName} thinking...`);
+    if (displayMode === 'full') {
+      printDim(`  ◉ ${displayName} thinking...`);
+    } else if (displayMode === 'compact') {
+      printDim(`  ◉ ${displayName} thinking...`);
+    }
+    // 'hidden' — no output
 
     // Check persistent write mode from privacy manager
     const hasWriteMode = writeMode || (this.privacy && this.privacy.hasWriteMode(agentName));
@@ -270,7 +301,9 @@ class Chatroom {
     this.agentManager.setStatus(agentName, 'idle');
 
     if (result.timedOut) {
-      printWarning(`${displayName} timed out. Partial response captured.`);
+      if (displayMode !== 'hidden') {
+        printWarning(`${displayName} timed out. Partial response captured.`);
+      }
     }
 
     if (result.text) {
@@ -282,17 +315,24 @@ class Chatroom {
         const suggestions = this.tagManager.extractSuggestions(agentName, result.text);
         for (const s of suggestions) {
           this.tagManager.addSuggestion(s);
-          printDim(`  💡 ${displayName} suggests: #${s.tag} — /tag confirm or /tag dismiss`);
+          if (displayMode === 'full') {
+            printDim(`  💡 ${displayName} suggests: #${s.tag} — /tag confirm or /tag dismiss`);
+          }
         }
       }
 
-      // Truncate for chatroom display
-      const display = result.text.length > 5000
-        ? result.text.substring(0, 5000) + '\n[... truncated — /full ' + agentName + ' for complete response]'
-        : result.text;
-
-      const tag = result.partial ? `${displayName} — PARTIAL` : displayName;
-      printAgent(tag, display, this.agentManager.agents.get(agentName)?.provider);
+      // Display response based on display mode
+      if (displayMode === 'full') {
+        const truncated = result.text.length > 5000
+          ? result.text.substring(0, 5000) + '\n[... truncated — /full ' + agentName + ' for complete response]'
+          : result.text;
+        const tag = result.partial ? `${displayName} — PARTIAL` : displayName;
+        printAgent(tag, truncated, this.agentManager.agents.get(agentName)?.provider);
+      } else if (displayMode === 'compact') {
+        const preview = result.text.substring(0, 120).replace(/\n/g, ' ');
+        printDim(`  ✔ ${displayName}: ${preview}${result.text.length > 120 ? '…' : ''}`);
+      }
+      // 'hidden' — no output
 
       // Log to session (shared log for all, private log for DMs)
       if (privateMode && this.privacy) {
@@ -301,32 +341,24 @@ class Chatroom {
         this.session.logMessage(agentName, result.text);
       }
 
-      // Push to other agents' inboxes (skip in private/DM mode)
-      if (privateMode) {
-        // In private mode, only broadcast if agent is transparent
-        if (this.privacy && this.privacy.isTransparent(agentName)) {
-          this.inboxManager.pushToAll(agentName, result.text, agentName);
-          printDim(`  (${displayName} is transparent — response broadcast to all)`);
+      // Journal the agent response
+      if (this.journal) {
+        const journalEvent = { type: 'msg', from: agentName, text: result.text };
+        if (journalMeta) Object.assign(journalEvent, journalMeta);
+        const seq = this.journal.append(journalEvent);
+
+        // Journal the routing based on broadcast mode
+        const routedTo = this._broadcastResponse(agentName, result.text, displayName, privateMode, broadcastTo);
+        if (routedTo && routedTo.length > 0) {
+          this.journal.append({ type: 'inbox_route', msgSeq: seq, to: routedTo });
         }
       } else {
-        this.inboxManager.pushToAll(agentName, result.text, agentName);
-        if (this.privacy && this.privacy.isTransparent(agentName)) {
-          printDim(`  (${displayName} is transparent — all agents can see its pane)`);
-        }
+        // No journal — still need to broadcast
+        this._broadcastResponse(agentName, result.text, displayName, privateMode, broadcastTo);
       }
 
-      // Journal the agent response and routing
-      if (this.journal) {
-        const seq = this.journal.append({ type: 'msg', from: agentName, text: result.text });
-        // Journal the routing based on broadcast mode
-        if (!privateMode) {
-          const recipients = [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
-          this.journal.append({ type: 'inbox_route', msgSeq: seq, to: recipients });
-        }
-      }
-
-      // Show token status after response
-      if (this.tokenTracker) {
+      // Show token status after response (only for full display)
+      if (displayMode === 'full' && this.tokenTracker) {
         const percent = this.tokenTracker.usagePercent(agentName);
         if (percent >= 50) {
           const color = percent >= 80 ? C.red : C.yellow;
@@ -334,8 +366,45 @@ class Chatroom {
         }
       }
     } else {
-      printDim(`  ${displayName} produced no output.`);
+      if (displayMode === 'full') {
+        printDim(`  ${displayName} produced no output.`);
+      }
     }
+
+    return result;
+  }
+
+  /**
+   * Internal: broadcast an agent's response to other inboxes.
+   * Returns the list of recipient agent names (for journal routing).
+   */
+  _broadcastResponse(agentName, text, displayName, privateMode, broadcastTo) {
+    // Private mode: only broadcast if agent is transparent
+    if (privateMode) {
+      if (this.privacy && this.privacy.isTransparent(agentName)) {
+        this.inboxManager.pushToAll(agentName, text, agentName);
+        printDim(`  (${displayName} is transparent — response broadcast to all)`);
+        return [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
+      }
+      return [];
+    }
+
+    // broadcastTo controls routing
+    if (broadcastTo === 'none') {
+      return [];
+    }
+
+    if (Array.isArray(broadcastTo)) {
+      this.inboxManager.pushToGroup(broadcastTo, agentName, text, agentName);
+      return broadcastTo.filter(n => n !== agentName);
+    }
+
+    // Default: 'all'
+    this.inboxManager.pushToAll(agentName, text, agentName);
+    if (this.privacy && this.privacy.isTransparent(agentName)) {
+      printDim(`  (${displayName} is transparent — all agents can see its pane)`);
+    }
+    return [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
   }
 
   handleStop(target) {
