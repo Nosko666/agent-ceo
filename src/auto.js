@@ -1,7 +1,7 @@
 'use strict';
 
 const KNOWN_STEPS = [
-  'plan', 'debate', 'consensus', 'implement', 'review', 'fix', 'verify',
+  'plan', 'debate', 'consensus', 'implement', 'review',
 ];
 
 const DEFAULT_PIPELINE = ['plan', 'debate', 'consensus', 'implement', 'review'];
@@ -181,6 +181,7 @@ class AutoRunner {
     if (this.state !== 'running') return;
     this.state = 'paused';
     if (this.currentJob) {
+      this.currentJob.state = 'paused';
       this.currentJob.pauseReason = reason || 'manual';
     }
   }
@@ -189,6 +190,7 @@ class AutoRunner {
     if (this.state !== 'paused') return false;
     this.state = 'running';
     if (this.currentJob) {
+      this.currentJob.state = 'running';
       delete this.currentJob.pauseReason;
     }
     return true;
@@ -198,8 +200,8 @@ class AutoRunner {
     if (this.currentJob) {
       this.currentJob.state = 'stopped';
       this.currentJob.finishedAt = Date.now();
-      if (journal && typeof journal.write === 'function') {
-        journal.write({ type: 'auto:stop', jobId: this.currentJob.id, ts: this.currentJob.finishedAt });
+      if (journal && typeof journal.append === 'function') {
+        journal.append({ type: 'auto_stop', jobId: this.currentJob.id });
       }
       this.jobs.push(this.currentJob);
       this.currentJob = null;
@@ -211,8 +213,8 @@ class AutoRunner {
     if (this.currentJob) {
       this.currentJob.state = 'completed';
       this.currentJob.finishedAt = Date.now();
-      if (journal && typeof journal.write === 'function') {
-        journal.write({ type: 'auto:complete', jobId: this.currentJob.id, ts: this.currentJob.finishedAt });
+      if (journal && typeof journal.append === 'function') {
+        journal.append({ type: 'auto_complete', jobId: this.currentJob.id });
       }
       this.jobs.push(this.currentJob);
       this.currentJob = null;
@@ -315,6 +317,11 @@ class AutoRunner {
           break;
         case 'review':
           advance = await this._runReviewStep(chatroom, job);
+          break;
+        default:
+          // Should never reach here (validatePipeline catches unknown steps)
+          // but if it does, skip rather than infinite loop
+          advance = true;
           break;
       }
 
