@@ -52,6 +52,19 @@ class Journal {
         this._eventsSinceSnapshot = lines.length;
       }
     }
+
+    // If journal was truncated (empty), check snapshot for the correct seq
+    if (this._seq === 0) {
+      const snapshotPath = path.join(dir, 'snapshot.json');
+      if (fs.existsSync(snapshotPath)) {
+        try {
+          const snap = JSON.parse(fs.readFileSync(snapshotPath, 'utf-8'));
+          if (snap.seq && snap.seq > this._seq) {
+            this._seq = snap.seq;
+          }
+        } catch { /* corrupt snapshot, ignore */ }
+      }
+    }
   }
 
   get nextSeq() { return this._seq + 1; }

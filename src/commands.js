@@ -90,6 +90,9 @@ function cmdGroup(ctx, args) {
   if (result.error) {
     printError(result.error);
   } else {
+    if (ctx.chatroom && ctx.chatroom.journal) {
+      ctx.chatroom.journal.append({ type: 'group_create', group: result.group, members: result.members });
+    }
     printSystem(`Group @${result.group}: ${result.members.join(', ')}`);
   }
 }
@@ -114,8 +117,14 @@ function cmdUngroup(ctx, args) {
     return;
   }
   const result = ctx.agentManager.removeGroup(args[0]);
-  if (result.error) printError(result.error);
-  else printSystem(`Removed group @${result.removed}`);
+  if (result.error) {
+    printError(result.error);
+  } else {
+    if (ctx.chatroom && ctx.chatroom.journal) {
+      ctx.chatroom.journal.append({ type: 'group_remove', group: result.removed });
+    }
+    printSystem(`Removed group @${result.removed}`);
+  }
 }
 
 // ── Pinned files ──────────────────────────────────────────
@@ -131,6 +140,9 @@ function cmdPin(ctx, args) {
     return;
   }
   ctx.session.addFileReference(filePath);
+  if (ctx.chatroom && ctx.chatroom.journal) {
+    ctx.chatroom.journal.append({ type: 'pin_add', path: filePath });
+  }
   printSystem(`📎 Pinned: ${filePath}`);
 }
 
@@ -148,6 +160,9 @@ function cmdUnpin(ctx, args) {
   if (args.length === 0) return;
   const filePath = args.join(' ');
   ctx.session.filesReferenced.delete(filePath);
+  if (ctx.chatroom && ctx.chatroom.journal) {
+    ctx.chatroom.journal.append({ type: 'pin_remove', path: filePath });
+  }
   printSystem(`Unpinned: ${filePath}`);
 }
 
@@ -169,6 +184,9 @@ function cmdMode(ctx, args) {
     for (const [name] of ctx.agentManager.agents) {
       ctx.privacy.setWriteMode(name, mode === 'write');
     }
+    if (ctx.chatroom && ctx.chatroom.journal) {
+      ctx.chatroom.journal.append({ type: 'mode_change', agent: 'all', mode });
+    }
     printSystem(`All agents set to ${mode.toUpperCase()} mode`);
     return;
   }
@@ -179,6 +197,9 @@ function cmdMode(ctx, args) {
     return;
   }
   ctx.privacy.setWriteMode(resolved, mode === 'write');
+  if (ctx.chatroom && ctx.chatroom.journal) {
+    ctx.chatroom.journal.append({ type: 'mode_change', agent: resolved, mode });
+  }
   printSystem(`${resolved} set to ${mode.toUpperCase()} mode`);
 }
 

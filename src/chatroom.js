@@ -603,6 +603,9 @@ class Chatroom {
       case 'session':
         if (args[0] === 'name' && args[1]) {
           this.session.setName(args.slice(1).join('-'));
+          if (this.journal) {
+            this.journal.append({ type: 'session_name', name: this.session.name });
+          }
           printSystem(`Session named: ${this.session.name}`);
         }
         break;

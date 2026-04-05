@@ -630,14 +630,39 @@ async function runChatroom(sessionId) {
     }
 
     // Replay journal events after snapshot
+    const msgsBySeq = new Map();
     for (const e of recoveryEvents) {
       if (e.type === 'msg') {
         session.chatLog.push({ from: e.from, text: e.text, timestamp: new Date(e.t).toISOString(), tags: [] });
+        msgsBySeq.set(e.seq, e);
       } else if (e.type === 'agent_session') {
         const agent = agentManager.agents.get(e.agent);
         if (agent) agent.sessionId = e.sessionId;
+      } else if (e.type === 'inbox_route') {
+        const msg = msgsBySeq.get(e.msgSeq);
+        if (msg) {
+          for (const agentName of e.to) {
+            inboxManager.pushTo(agentName, msg.from, msg.text);
+          }
+        }
+      } else if (e.type === 'inbox_flush') {
+        inboxManager.flush(e.agent);
+      } else if (e.type === 'inbox_clear') {
+        inboxManager.clear(e.agent);
+      } else if (e.type === 'tag_add') {
+        session.tags.push({ tag: e.tag, text: e.text, timestamp: new Date(e.t).toISOString(), index: session.chatLog.length - 1 });
+      } else if (e.type === 'pin_add') {
+        session.addFileReference(e.path);
+      } else if (e.type === 'pin_remove') {
+        session.filesReferenced.delete(e.path);
+      } else if (e.type === 'session_name') {
+        session.setName(e.name);
+      } else if (e.type === 'group_create') {
+        agentManager.groups.set(e.group, e.members);
+      } else if (e.type === 'group_remove') {
+        agentManager.groups.delete(e.group);
       }
-      // inbox_route events are NOT replayed (fresh inboxes on recovery)
+      // mode_change, codex_marker_sent, auto_* handled by their respective modules
     }
 
     console.log(`  Restored: ${session.chatLog.length} messages from journal`);
@@ -853,6 +878,8 @@ async function recoverFromReboot(sessionInfo) {
   if (sessionName !== originalName) {
     const newRunningDir = path.join(RUNNING_DIR, sessionName);
     try {
+      // allocateSessionName created an empty dir — remove it before rename
+      fs.rmdirSync(newRunningDir);
       fs.renameSync(runningDir, newRunningDir);
       actualRunningDir = newRunningDir;
     } catch (e) {
