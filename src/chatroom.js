@@ -19,6 +19,7 @@ class Chatroom {
     this.tagManager = extras.tagManager || null;
     this.tokenTracker = extras.tokenTracker || null;
     this.privacy = extras.privacy || null;
+    this.journal = extras.journal || null;
     this.rl = null;
     this.running = false;
     this._shuttingDown = false;
@@ -65,7 +66,17 @@ class Chatroom {
     // Auto-save every 30s
     this.autoSaveInterval = setInterval(() => {
       this.session.autoSave(this.agentManager, this.inboxManager);
+      if (this.journal && this.journal.needsSnapshot()) {
+        this._writeSnapshot();
+      }
     }, 30000);
+
+    // Periodic journal snapshot every 60s
+    this.snapshotInterval = setInterval(() => {
+      if (this.journal && this.journal.eventCount > 0) {
+        this._writeSnapshot();
+      }
+    }, 60000);
 
     // Token usage warnings every 60s
     this.tokenWarningInterval = setInterval(() => {
@@ -99,6 +110,11 @@ class Chatroom {
     if (input.startsWith('#')) {
       this.session.logMessage('ceo', input);
       this.inboxManager.pushToAll('ceo', input);
+      if (this.journal) {
+        const seq = this.journal.append({ type: 'msg', from: 'ceo', text: input });
+        const recipients = [...this.inboxManager.inboxes.keys()];
+        this.journal.append({ type: 'inbox_route', msgSeq: seq, to: recipients });
+      }
       printCeo(input);
       return;
     }
@@ -106,6 +122,11 @@ class Chatroom {
     // Plain message — goes to all inboxes, nobody responds
     this.session.logMessage('ceo', input);
     this.inboxManager.pushToAll('ceo', input);
+    if (this.journal) {
+      const seq = this.journal.append({ type: 'msg', from: 'ceo', text: input });
+      const recipients = [...this.inboxManager.inboxes.keys()];
+      this.journal.append({ type: 'inbox_route', msgSeq: seq, to: recipients });
+    }
     printCeo(input);
     printDim('  (message queued for all agents)');
   }
@@ -170,6 +191,11 @@ class Chatroom {
       this.inboxManager.pushTo(agentName, 'ceo', fullMsg);
     }
 
+    if (this.journal) {
+      const seq = this.journal.append({ type: 'msg', from: 'ceo', text: fullMsg });
+      this.journal.append({ type: 'inbox_route', msgSeq: seq, to: [...agents] });
+    }
+
     printCeo(`@${target} ${fullMsg}`);
 
     // Send to all agents in parallel
@@ -185,6 +211,10 @@ class Chatroom {
     if (!prompt) {
       printDim(`  ${displayName} has nothing new to read.`);
       return;
+    }
+
+    if (this.journal) {
+      this.journal.append({ type: 'inbox_flush', agent: agentName });
     }
 
     // Mark as running
@@ -282,6 +312,16 @@ class Chatroom {
         this.inboxManager.pushToAll(agentName, result.text, agentName);
         if (this.privacy && this.privacy.isTransparent(agentName)) {
           printDim(`  (${displayName} is transparent — all agents can see its pane)`);
+        }
+      }
+
+      // Journal the agent response and routing
+      if (this.journal) {
+        const seq = this.journal.append({ type: 'msg', from: agentName, text: result.text });
+        // Journal the routing based on broadcast mode
+        if (!privateMode) {
+          const recipients = [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
+          this.journal.append({ type: 'inbox_route', msgSeq: seq, to: recipients });
         }
       }
 
@@ -494,6 +534,28 @@ class Chatroom {
     }
   }
 
+  // ── Journal snapshot ───────────────────────────────────
+
+  _writeSnapshot() {
+    if (!this.journal) return;
+    try {
+      const state = {
+        inboxes: this.inboxManager.serialize(),
+        agents: this.agentManager.serialize(),
+        tags: this.session.tags,
+        filesReferenced: [...this.session.filesReferenced],
+        privacy: this.privacy ? this.privacy.serialize() : null,
+        tokenTracker: this.tokenTracker ? { sent: { ...this.tokenTracker.sent }, received: { ...this.tokenTracker.received } } : null,
+        chatLogTail: this.session.chatLog.slice(-200),
+        schemaVersion: 1,
+        appVersion: '2.0.0',
+      };
+      this.journal.writeSnapshot(state);
+    } catch (e) {
+      // Silent fail for periodic snapshots — don't crash the chatroom
+    }
+  }
+
   // ── Shutdown ───────────────────────────────────────────
 
   shutdown() {
@@ -505,6 +567,12 @@ class Chatroom {
     if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
     if (this.autoSaveInterval) clearInterval(this.autoSaveInterval);
     if (this.tokenWarningInterval) clearInterval(this.tokenWarningInterval);
+    if (this.snapshotInterval) clearInterval(this.snapshotInterval);
+
+    // Final snapshot before exit
+    if (this.journal && this.journal.eventCount > 0) {
+      this._writeSnapshot();
+    }
 
     // Save session
     try {

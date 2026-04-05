@@ -22,6 +22,7 @@ const WorkflowManager = require('./workflows');
 const TagManager = require('./tags');
 const TokenTracker = require('./tokens');
 const PrivacyManager = require('./privacy');
+const Journal = require('./journal');
 
 const SESSION_NAME = 'ceo';
 const LOG_DIR = '/tmp/agent-ceo';
@@ -330,6 +331,10 @@ function launchInTmux(args) {
     execSync(`tmux select-layout -t ${sessionName} tiled 2>/dev/null`);
   } catch { /* ignore */ }
 
+  // ── Create persistent running directory for journal ──
+  const runningDir = path.join(require('os').homedir(), '.agent-ceo', 'running', sessionName);
+  fs.mkdirSync(runningDir, { recursive: true });
+
   // ── Save setup state for the chatroom process ────────
   const setupState = {
     sessionName,
@@ -417,6 +422,11 @@ async function runChatroom(sessionId) {
   // ── Other managers ───────────────────────────────────
   const capture = new ResponseCapture(paneManager);
   const session = new SessionManager();
+
+  // Initialize Journal in persistent running directory
+  const runningDir = path.join(require('os').homedir(), '.agent-ceo', 'running', setup.sessionName);
+  const journal = new Journal(runningDir);
+
   const privacy = new PrivacyManager(agentManager);
   const tokenTracker = new TokenTracker(agentManager, paneManager);
   const tagManager = new TagManager(session);
@@ -492,12 +502,16 @@ async function runChatroom(sessionId) {
     tokenTracker,
     tagManager,
     privacy,
+    journal,
   });
 
   const workflows = new WorkflowManager(
     agentManager, inboxManager, paneManager, capture, session, chatroom
   );
   chatroom.workflows = workflows;
+
+  // Release lock before tmux is destroyed (destroySession kills our pane)
+  chatroom.onShutdown = releaseLock;
 
   // Route Ctrl+C / SIGTERM to chatroom.shutdown() for clean save + tmux cleanup
   process.on('SIGINT', () => chatroom.shutdown());
