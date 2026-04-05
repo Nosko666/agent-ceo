@@ -278,7 +278,7 @@ function cmdFocus(ctx, args) {
 // ── Session ───────────────────────────────────────────────
 
 function cmdSave(ctx, args) {
-  const dir = ctx.session.save(ctx.agentManager, ctx.inboxManager, ctx.privacy);
+  const dir = ctx.session.save(ctx.agentManager, ctx.inboxManager, ctx.privacy, ctx.chatroom.autoRunner);
   printSystem(`Session saved to: ${dir}`);
 
   if (args && args.includes('--native')) {
@@ -551,6 +551,12 @@ function cmdPreset(ctx) {
 
 function cmdDetach(ctx) {
   const { execSync } = require('child_process');
+
+  // Warn if /auto is running
+  if (ctx.chatroom.autoRunner && ctx.chatroom.autoRunner.state === 'running') {
+    const job = ctx.chatroom.autoRunner.currentJob;
+    printSystem(`[auto] Still running (round ${job.round}/${job.maxRounds}). Detaching client...`);
+  }
 
   // Targeted detach: find this client's TTY
   try {

@@ -883,15 +883,34 @@ class Chatroom {
   // ── Quit confirmation ──────────────────────────────────
 
   confirmAndShutdown() {
-    // Use the existing readline to avoid conflicts
-    this.rl.question('  Are you sure? This ends all agents. (y/N): ', (answer) => {
-      if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
-        this.shutdown();
-      } else {
-        printSystem('Quit cancelled.');
-        this.rl.prompt();
-      }
-    });
+    const { printSystem } = require('./display');
+
+    if (this.autoRunner && this.autoRunner.state !== 'idle') {
+      const job = this.autoRunner.currentJob;
+      this.rl.question(
+        `  ⚠ Auto job ${job.id} is ${job.state} (round ${job.round}/${job.maxRounds}).\n` +
+        `  Quit will stop the job and kill all agents.\n` +
+        `  Type 'quit' to confirm, or use /detach to leave it running.\n  > `,
+        (answer) => {
+          if (answer.trim().toLowerCase() === 'quit') {
+            this.autoRunner.stop(this.journal);
+            this.shutdown();
+          } else {
+            printSystem('Quit cancelled.');
+            this.rl.prompt();
+          }
+        }
+      );
+    } else {
+      this.rl.question('  Are you sure? This ends all agents. (y/N): ', (answer) => {
+        if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+          this.shutdown();
+        } else {
+          printSystem('Quit cancelled.');
+          this.rl.prompt();
+        }
+      });
+    }
   }
 
   // ── Shutdown ───────────────────────────────────────────
@@ -924,7 +943,7 @@ class Chatroom {
 
     // Save session
     try {
-      const dir = this.session.save(this.agentManager, this.inboxManager, this.privacy);
+      const dir = this.session.save(this.agentManager, this.inboxManager, this.privacy, this.autoRunner);
       console.log(`\n${C.dim}Session saved to: ${dir}${C.reset}`);
       // Clean up running dir — session was saved successfully
       if (this.runningDir) {

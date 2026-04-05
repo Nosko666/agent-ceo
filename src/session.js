@@ -68,7 +68,7 @@ class SessionManager {
 
   // ── Save ───────────────────────────────────────────────
 
-  save(agentManager, inboxManager, privacy = null) {
+  save(agentManager, inboxManager, privacy = null, autoRunner = null) {
     const sessionName = this.name || `session-${Date.now()}`;
     const dir = path.join(SESSIONS_DIR, sessionName);
     fs.mkdirSync(dir, { recursive: true });
@@ -126,6 +126,30 @@ class SessionManager {
     }
 
     fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state, null, 2));
+
+    // Save auto job outputs
+    if (autoRunner && autoRunner.jobs && autoRunner.jobs.length > 0) {
+      const autoDir = path.join(dir, 'auto');
+      fs.mkdirSync(autoDir, { recursive: true });
+
+      for (const job of autoRunner.jobs) {
+        const lines = [
+          `# Auto Job ${job.id}: ${job.goal}`,
+          `Pipeline: ${job.pipeline.join(' → ')}`,
+          `State: ${job.state} | Rounds: ${job.round}/${job.maxRounds}`,
+          `Participants: ${job.participants.join(', ')}`,
+          '', '---', '',
+        ];
+
+        for (const r of job.responses) {
+          lines.push(`## Round ${r.round} — ${r.step} (${r.agent})`);
+          lines.push(r.text);
+          lines.push('');
+        }
+
+        fs.writeFileSync(path.join(autoDir, `${job.id}.md`), lines.join('\n'));
+      }
+    }
 
     return dir;
   }
