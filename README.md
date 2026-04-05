@@ -82,6 +82,10 @@ Agents run as persistent interactive CLI sessions. They maintain their own conte
 | Workflows (/debate, /plan, /review, /research) | ✅ |
 | Token dashboard (/tokens, /status) | ✅ |
 | Tag system (#decision, #todo) | ✅ |
+| Autonomous pipeline (/auto) | ✅ |
+| Session management (startup menu, /detach) | ✅ |
+| Crash/VPS recovery | ✅ |
+| Provider native session resume | ✅ |
 
 ## Commands
 
@@ -106,12 +110,24 @@ Groups:
   /ungroup <name>       Delete group
   /groups               List groups
 
+Autonomous:
+  /auto <goal>          Start autonomous pipeline
+  /auto --pipeline p,d  Custom steps (plan,debate,consensus,implement,review)
+  /auto --rounds N      Max agent responses (default 10)
+  /auto --no-roles      All agents equal
+  /auto status          Show job status
+  /auto pause / resume  Pause/resume pipeline
+  /auto stop            End job
+  /auto verbose on|off  Toggle full output
+  /full auto [jobId]    Full transcript of auto run
+
 Session:
   /session name <name>  Name this session
-  /save                 Save to disk
+  /save [--native]      Save to disk (--native includes provider session IDs)
+  /detach               Leave (agents keep running)
   /history              Recent messages
   /help                 Full reference
-  /quit                 Exit
+  /quit                 Exit (confirms first)
 ```
 
 ## Adding a New Provider
