@@ -347,6 +347,12 @@ function launchInTmux(args) {
     const sessionLogDir = path.join('/tmp/agent-ceo', sessionName);
     fs.mkdirSync(sessionLogDir, { recursive: true });
 
+    // If --native, load native IDs before creating panes so we can use resume args
+    let nativeIds = null;
+    if (args.native && args.session) {
+      nativeIds = SessionManager.loadNativeIds(args.session);
+    }
+
     const agentPanes = {};
 
     for (const { name, provider: providerName } of agentList) {
@@ -370,11 +376,20 @@ function launchInTmux(args) {
       // Start logging BEFORE starting the CLI
       execSync(`tmux pipe-pane -t ${paneId} "cat >> ${logFile}"`);
 
-      // Generate native session ID (Claude: UUID; Codex: null, discovered later)
-      const sessionId = provider.generateSessionId ? provider.generateSessionId() : null;
+      // Check for native resume IDs
+      let sessionId;
+      let cliArgs;
 
-      // Start the agent CLI with session ID if available
-      const cliArgs = provider.getStartArgs ? provider.getStartArgs(sessionId) : provider.startArgs;
+      if (nativeIds && nativeIds[name]) {
+        sessionId = nativeIds[name].sessionId;
+        cliArgs = provider.getResumeArgs ? provider.getResumeArgs(sessionId) : provider.startArgs;
+        console.log(`  ${name}: resuming native session ${sessionId.substring(0, 8)}...`);
+      } else {
+        // Generate native session ID (Claude: UUID; Codex: null, discovered later)
+        sessionId = provider.generateSessionId ? provider.generateSessionId() : null;
+        cliArgs = provider.getStartArgs ? provider.getStartArgs(sessionId) : provider.startArgs;
+      }
+
       const cmd = `${provider.command} ${cliArgs.join(' ')}`.trim();
       execFileSync('tmux', ['send-keys', '-t', paneId, '-l', cmd]);
       execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
@@ -588,22 +603,44 @@ async function runChatroom(sessionId) {
     }
   }
 
-  // If --native flag, attempt native session resume using stored IDs
-  if (setup.originalArgs.native) {
-    const nativeIds = SessionManager.loadNativeIds(resumeSession);
-    if (nativeIds) {
-      const { printSystem } = require('./display');
-      for (const [name, info] of Object.entries(nativeIds)) {
-        const agent = agentManager.agents.get(name);
-        if (agent) {
-          agent.sessionId = info.sessionId;
-          printSystem(`  ${name}: native session ${info.sessionId.substring(0, 8)}...`);
+  // Native session IDs are now set in launchInTmux (before pane creation)
+  // and passed through setup.agents[name].sessionId — no late restore needed.
+
+  // ── Restore chatroom state from journal on recovery ──
+  if (setup.isRecovery) {
+    const snapshot = journal.loadSnapshot();
+    const recoveryEvents = snapshot ? journal.replay(snapshot.seq) : journal.replay();
+
+    // Restore from snapshot first
+    if (snapshot) {
+      if (snapshot.inboxes) inboxManager.restore(snapshot.inboxes);
+      if (snapshot.tags) session.tags = snapshot.tags;
+      if (snapshot.filesReferenced) session.filesReferenced = new Set(snapshot.filesReferenced);
+      if (snapshot.chatLogTail) session.chatLog = snapshot.chatLogTail;
+      if (snapshot.privacy) privacy.restore(snapshot.privacy);
+      if (snapshot.agents && snapshot.agents.agents) {
+        for (const [name, agentState] of Object.entries(snapshot.agents.agents)) {
+          const agent = agentManager.agents.get(name);
+          if (agent) {
+            if (agentState.customName) agent.customName = agentState.customName;
+            if (agentState.sessionId) agent.sessionId = agentState.sessionId;
+          }
         }
       }
-    } else {
-      const { printWarning } = require('./display');
-      printWarning('No native.json found — starting fresh sessions.');
     }
+
+    // Replay journal events after snapshot
+    for (const e of recoveryEvents) {
+      if (e.type === 'msg') {
+        session.chatLog.push({ from: e.from, text: e.text, timestamp: new Date(e.t).toISOString(), tags: [] });
+      } else if (e.type === 'agent_session') {
+        const agent = agentManager.agents.get(e.agent);
+        if (agent) agent.sessionId = e.sessionId;
+      }
+      // inbox_route events are NOT replayed (fresh inboxes on recovery)
+    }
+
+    console.log(`  Restored: ${session.chatLog.length} messages from journal`);
   }
 
   // ── Wait for agents to initialize (or check status on recovery) ──

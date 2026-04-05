@@ -47,8 +47,14 @@ class AgentManager {
     const num = this.counters[providerName]++;
     const agentName = `${providerName}${num}`;
 
+    // Generate native session ID for providers that support it
+    const sessionId = provider.generateSessionId ? provider.generateSessionId() : null;
+
+    // Build CLI args with session ID
+    const cliArgs = provider.getStartArgs ? provider.getStartArgs(sessionId) : provider.startArgs;
+
     // Create pane
-    const { paneId, logFile } = this.paneManager.createAgentPane(agentName, provider);
+    const { paneId, logFile } = this.paneManager.createAgentPane(agentName, provider, 'right', 25, cliArgs);
 
     // Register inbox
     this.inboxManager.register(agentName);
@@ -60,7 +66,7 @@ class AgentManager {
       customName: null,
       status: 'starting',
       spawnedAt: new Date().toISOString(),
-      sessionId: null,
+      sessionId,
     });
 
     // Mark as ready after startup delay

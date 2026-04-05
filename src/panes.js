@@ -86,7 +86,7 @@ class PaneManager {
     }
   }
 
-  createAgentPane(agentName, provider, direction = 'right', percent = 25) {
+  createAgentPane(agentName, provider, direction = 'right', percent = 25, cliArgs = null) {
     const logFile = path.join(this.logDir, `${agentName}.log`);
 
     // Clear old log
@@ -106,7 +106,8 @@ class PaneManager {
     execSync(`tmux pipe-pane -t ${paneId} "cat >> ${logFile}"`);
 
     // Start the agent CLI via literal send-keys (shell is ready for input)
-    const cmd = `${provider.command} ${provider.startArgs.join(' ')}`.trim();
+    const args = cliArgs || provider.startArgs || [];
+    const cmd = `${provider.command} ${args.join(' ')}`.trim();
     execFileSync('tmux', ['send-keys', '-t', paneId, '-l', cmd]);
     execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
 

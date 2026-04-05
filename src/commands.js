@@ -404,6 +404,14 @@ async function cmdClear(ctx, args) {
   const newSessionId = provider.generateSessionId ? provider.generateSessionId() : null;
   agent.sessionId = newSessionId;
 
+  // Reset Codex marker state so a new marker is generated on next message
+  agent._codexMarker = null;
+  agent._codexMarkerSent = false;
+  if (agent._codexDiscovery) {
+    agent._codexDiscovery.cancel();
+    agent._codexDiscovery = null;
+  }
+
   // Journal the new session ID
   if (ctx.chatroom && ctx.chatroom.journal && newSessionId) {
     ctx.chatroom.journal.append({ type: 'agent_session', agent: resolved, sessionId: newSessionId });

@@ -91,11 +91,23 @@ class SessionManager {
       `# Files Referenced\n\n${filesMd || 'None'}\n`);
 
     // State for resume — full restorable state
+    const agentsSerialized = agentManager.serialize();
+    // Strip native sessionIds from portable save (they go in native.json via --native)
+    if (agentsSerialized.agents) {
+      for (const [name, agent] of Object.entries(agentsSerialized.agents)) {
+        delete agent.sessionId;
+        // Also clean up internal Codex state
+        delete agent._codexMarker;
+        delete agent._codexMarkerSent;
+        delete agent._codexDiscovery;
+      }
+    }
+
     const state = {
       name: sessionName,
       startedAt: this.startedAt,
       savedAt: new Date().toISOString(),
-      agents: agentManager.serialize(),
+      agents: agentsSerialized,
       inboxes: inboxManager.serialize(),
       messageCount: this.chatLog.length,
       chatLog: this.chatLog,

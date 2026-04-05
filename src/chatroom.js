@@ -43,6 +43,7 @@ class Chatroom {
     } else {
       this.journal = null;
     }
+    this._codexPendingMarkers = new Map(); // marker → { agentName, discovery }
     this.healthCheckInterval = null;
     this.autoSaveInterval = null;
     this.tokenWarningInterval = null;
@@ -296,24 +297,8 @@ class Chatroom {
         actualPrompt = agent._codexMarker + ' (internal, ignore)\n' + prompt;
         agent._codexMarkerSent = true;
 
-        // Start async background discovery
-        const CodexDiscovery = require('./native/codexDiscovery');
-        const discovery = CodexDiscovery.startDiscovery({
-          marker: agent._codexMarker,
-          agentName,
-          sessionsDir: null, // uses env var or default
-          agentStartTime: new Date(agent.spawnedAt).getTime(),
-          projectDir: process.cwd(),
-          onFound: (filePath) => {
-            // Record discovered session ID
-            agent.sessionId = filePath; // file path as ID for now
-            if (this.journal) {
-              this.journal.append({ type: 'agent_session', agent: agentName, sessionId: filePath });
-            }
-            this._metaDirty = true;
-          },
-        });
-        agent._codexDiscovery = discovery;
+        // Register marker with session-level scanner
+        this._startCodexDiscoveryIfNeeded(agentName, agent);
       }
     }
 
@@ -483,6 +468,30 @@ class Chatroom {
       printDim(`  (${displayName} is transparent — all agents can see its pane)`);
     }
     return [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
+  }
+
+  _startCodexDiscoveryIfNeeded(agentName, agent) {
+    const CodexDiscovery = require('./native/codexDiscovery');
+    // Register marker with session-level pending map
+    this._codexPendingMarkers.set(agent._codexMarker, agentName);
+
+    // Start one discovery per agent (full single-scanner optimization is Phase 3.5)
+    const discovery = CodexDiscovery.startDiscovery({
+      marker: agent._codexMarker,
+      agentName,
+      sessionsDir: null, // uses env var or default
+      agentStartTime: new Date(agent.spawnedAt).getTime(),
+      projectDir: process.cwd(),
+      onFound: (sessionId) => {
+        agent.sessionId = sessionId;
+        if (this.journal) {
+          this.journal.append({ type: 'agent_session', agent: agentName, sessionId });
+        }
+        this._metaDirty = true;
+        this._codexPendingMarkers.delete(agent._codexMarker);
+      },
+    });
+    agent._codexDiscovery = discovery;
   }
 
   handleStop(target) {

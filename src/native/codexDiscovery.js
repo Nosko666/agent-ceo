@@ -95,6 +95,40 @@ function findCandidateFiles(baseDir, minMtime, maxDepth = 4) {
   return results;
 }
 
+function extractSessionId(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n');
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        // Look for session identifier in various Codex metadata formats
+        if (obj.session_id) return obj.session_id;
+        if (obj.id) return obj.id;
+        if (obj.metadata && obj.metadata.session_id) return obj.metadata.session_id;
+      } catch { /* not JSON, skip */ }
+    }
+    // Fallback: derive from filename (rollout-<id>.jsonl)
+    const basename = path.basename(filePath, '.jsonl');
+    const match = basename.match(/rollout-(.+)/);
+    if (match) return match[1];
+  } catch { /* ignore */ }
+  return null;
+}
+
+function validateCwd(line, expectedProjectDir) {
+  try {
+    const meta = JSON.parse(line);
+    const cwd = meta.cwd || meta.project_dir || meta.working_directory || '';
+    if (!cwd) return true; // can't validate, accept
+    const resolved = fs.realpathSync(cwd);
+    const expected = fs.realpathSync(expectedProjectDir);
+    return resolved.startsWith(expected);
+  } catch {
+    return true; // can't parse, accept
+  }
+}
+
 function startDiscovery({ marker, agentName, sessionsDir, agentStartTime, projectDir, onFound }) {
   const baseDir = sessionsDir || process.env.AGENT_CEO_CODEX_SESSIONS_DIR || DEFAULT_SESSIONS_DIR;
   let cancelled = false;
@@ -116,8 +150,20 @@ function startDiscovery({ marker, agentName, sessionsDir, agentStartTime, projec
         fileState.set(file.path, { bytesRead: result.bytesRead, overlapBuffer: result.overlapBuffer });
 
         if (result.found) {
-          if (onFound) onFound(file.path);
-          resolve(file.path);
+          // Validate cwd matches project dir
+          if (projectDir) {
+            try {
+              const content = fs.readFileSync(file.path, 'utf-8');
+              const firstLine = content.split('\n')[0];
+              if (!validateCwd(firstLine, projectDir)) {
+                // Wrong project — skip this file, keep scanning
+                continue;
+              }
+            } catch { /* can't read, accept */ }
+          }
+          const sessionId = extractSessionId(file.path);
+          if (onFound) onFound(sessionId || file.path);
+          resolve(sessionId || file.path);
           return;
         }
       }
@@ -140,6 +186,8 @@ module.exports = {
   scanForMarker,
   scanFileChunk,
   findCandidateFiles,
+  extractSessionId,
+  validateCwd,
   startDiscovery,
   DEFAULT_SESSIONS_DIR,
 };
