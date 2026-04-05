@@ -7,6 +7,14 @@
 class InboxManager {
   constructor() {
     this.inboxes = new Map(); // agentName → [{ from, text, timestamp }]
+    this._dropped = new Map(); // agentName → number of dropped messages
+    this._maxMessages = Infinity;
+    this._maxChars = Infinity;
+  }
+
+  setLimits({ maxMessages = Infinity, maxChars = Infinity } = {}) {
+    this._maxMessages = maxMessages;
+    this._maxChars = maxChars;
   }
 
   register(agentName) {
@@ -22,12 +30,24 @@ class InboxManager {
   // Push a message into one agent's inbox
   pushTo(agentName, from, text) {
     const inbox = this.inboxes.get(agentName);
-    if (inbox) {
-      inbox.push({
-        from,
-        text,
-        timestamp: new Date().toISOString(),
-      });
+    if (!inbox) return;
+
+    inbox.push({ from, text, timestamp: new Date().toISOString() });
+
+    // Enforce max messages
+    while (inbox.length > this._maxMessages) {
+      inbox.shift();
+      this._dropped.set(agentName, (this._dropped.get(agentName) || 0) + 1);
+    }
+
+    // Enforce max chars
+    if (this._maxChars < Infinity) {
+      let totalChars = inbox.reduce((sum, m) => sum + m.text.length, 0);
+      while (totalChars > this._maxChars && inbox.length > 1) {
+        const removed = inbox.shift();
+        totalChars -= removed.text.length;
+        this._dropped.set(agentName, (this._dropped.get(agentName) || 0) + 1);
+      }
     }
   }
 
@@ -54,10 +74,17 @@ class InboxManager {
     const inbox = this.inboxes.get(agentName);
     if (!inbox || inbox.length === 0) return null;
 
+    const dropped = this._dropped.get(agentName) || 0;
     const messages = [...inbox];
     inbox.length = 0; // clear
+    this._dropped.set(agentName, 0);
 
-    return this.format(messages);
+    let formatted = '';
+    if (dropped > 0) {
+      formatted += `[SYSTEM]: ${dropped} earlier message${dropped > 1 ? 's' : ''} dropped (inbox overflow)\n`;
+    }
+    formatted += this.format(messages);
+    return formatted;
   }
 
   // Clear inbox without returning contents (used by /clear)
@@ -87,6 +114,11 @@ class InboxManager {
   count(agentName) {
     const inbox = this.inboxes.get(agentName);
     return inbox ? inbox.length : 0;
+  }
+
+  // Get number of dropped messages for an agent
+  droppedCount(agentName) {
+    return this._dropped.get(agentName) || 0;
   }
 
   // Get counts for all agents
