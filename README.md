@@ -140,7 +140,7 @@ Then: `agent-ceo --agents gemini:2,claude:1`
 
 ## Requirements
 
-- **Node.js** 18+
+- **Node.js** 20+
 - **tmux** (auto-installed by setup.sh)
 - At least one AI CLI authenticated:
   - [Claude Code](https://claude.com/product/claude-code) (`claude` command)

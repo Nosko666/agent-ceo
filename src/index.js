@@ -101,8 +101,8 @@ function checkDependencies() {
   }
 
   const nodeVersion = parseInt(process.version.slice(1), 10);
-  if (nodeVersion < 18) {
-    issues.push(`Node.js 18+ required. You have ${process.version}`);
+  if (nodeVersion < 20) {
+    issues.push(`Node.js 20+ required. You have ${process.version}`);
   }
 
   return issues;
@@ -771,6 +771,22 @@ async function createNewSession(args) {
       const providersDir = path.join(__dirname, 'providers');
       const providerFiles = fs.readdirSync(providersDir).filter(f => f !== 'template.js' && f.endsWith('.js'));
 
+      // Sort by config.providersOrder
+      const Config = require('./config');
+      const baseDir = path.join(require('os').homedir(), '.agent-ceo');
+      const config = Config.load(baseDir);
+      const order = config.providersOrder || ['claude', 'codex'];
+
+      providerFiles.sort((a, b) => {
+        const nameA = a.replace('.js', '');
+        const nameB = b.replace('.js', '');
+        const idxA = order.indexOf(nameA);
+        const idxB = order.indexOf(nameB);
+        const posA = idxA >= 0 ? idxA : order.length;
+        const posB = idxB >= 0 ? idxB : order.length;
+        return posA - posB;
+      });
+
       for (const file of providerFiles) {
         const provider = require(path.join(providersDir, file));
         const name = provider.name;
@@ -858,7 +874,39 @@ async function main() {
 
   // Direct attach
   if (args.attach) {
+    // Check if chatroom is down and auto-recover
+    const { buildActiveSessionInfo } = require('./menu');
+    try {
+      const info = buildActiveSessionInfo(args.attach);
+      if (!info.chatroomAlive) {
+        console.log(`  Session ${args.attach} has chatroom down. Recovering...`);
+        recoverChatroom(info);
+        return;
+      }
+    } catch { /* session might not be agent-ceo, just attach */ }
     attachToSession(args.attach);
+    return;
+  }
+
+  // --resume: list saved sessions and exit
+  if (args.resume && !args.session) {
+    const SessionManager = require('./session');
+    const sessions = SessionManager.listSessions();
+    if (sessions.length === 0) {
+      console.log('No saved sessions found.');
+      process.exit(0);
+    }
+    console.log('\nSaved sessions:');
+    sessions.forEach((s, i) => {
+      console.log(`  ${i + 1}. ${s.name} (${s.messageCount} messages, saved ${new Date(s.savedAt).toLocaleString()})`);
+    });
+    console.log('\nRun: agent-ceo --session <name> to resume.\n');
+    process.exit(0);
+  }
+
+  // --session: direct resume (skip menu)
+  if (args.session) {
+    await createNewSession(args);
     return;
   }
 
@@ -943,6 +991,34 @@ async function main() {
 
   if (input === 'q') { process.exit(0); }
   if (input === 'n') { await createNewSession(args); return; }
+
+  if (input === 'r') {
+    // Show saved sessions sub-menu
+    const SessionManager = require('./session');
+    const saved = SessionManager.listSessions();
+    if (saved.length === 0) {
+      console.log('\n  No saved sessions found.\n');
+      // Re-show menu... or just prompt for new
+      await createNewSession(args);
+      return;
+    }
+    console.log(`\n${C.bold}  Saved sessions:${C.reset}`);
+    saved.forEach((s, i) => {
+      const savedAt = s.savedAt ? new Date(s.savedAt).toLocaleString() : 'unknown';
+      console.log(`    ${i + 1}. ${s.name} (${s.messageCount} messages, saved ${savedAt})`);
+    });
+    const savedAnswer = await prompt(`\n  [1-${saved.length}] Resume  |  [B] Back\n\n  > `);
+    if (savedAnswer.toLowerCase() === 'b') {
+      // User wants to go back — just exit, they can re-run
+      process.exit(0);
+    }
+    const savedIdx = parseInt(savedAnswer, 10) - 1;
+    if (savedIdx >= 0 && savedIdx < saved.length) {
+      args.session = saved[savedIdx].name;
+      await createNewSession(args);
+    }
+    return;
+  }
 
   // Numeric selection
   const selected = options.find(o => o.key === input);

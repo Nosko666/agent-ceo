@@ -70,6 +70,15 @@ class Chatroom {
       if (this.journal && this.journal.needsSnapshot()) {
         this._writeSnapshot();
       }
+      // Update meta.json lastActive
+      if (this.runningDir) {
+        try {
+          const { writeMeta, readMeta } = require('./menu');
+          const existing = readMeta(this.runningDir) || {};
+          existing.lastActive = new Date().toISOString();
+          writeMeta(this.runningDir, existing);
+        } catch { /* silent */ }
+      }
     }, 30000);
 
     // Periodic journal snapshot every 60s
