@@ -59,8 +59,10 @@ function cmdRevive(ctx, args) {
   const result = ctx.agentManager.revive(args[0]);
   if (result.error) {
     printError(result.error);
+  } else if (result.resumed) {
+    printSystem(`Reviving ${result.revived} (resuming native session)...`);
   } else {
-    printSystem(`Reviving ${result.revived}...`);
+    printSystem(`Reviving ${result.revived} (fresh session)...`);
   }
 }
 
@@ -391,8 +393,19 @@ async function cmdClear(ctx, args) {
   // Clear stale inbox before restarting (prevents processing old queued messages)
   ctx.inboxManager.clear(resolved);
 
-  // Revive the agent (restarts its CLI session, truncates log file)
-  const result = ctx.agentManager.revive(resolved);
+  // Generate new session ID (intentional reset — new conversation)
+  const agent = ctx.agentManager.agents.get(resolved);
+  const provider = ctx.agentManager.providers[agent.provider];
+  const newSessionId = provider.generateSessionId ? provider.generateSessionId() : null;
+  agent.sessionId = newSessionId;
+
+  // Journal the new session ID
+  if (ctx.chatroom && ctx.chatroom.journal && newSessionId) {
+    ctx.chatroom.journal.append({ type: 'agent_session', agent: resolved, sessionId: newSessionId });
+  }
+
+  // Revive the agent fresh (not resume — this is a new session with new ID)
+  const result = ctx.agentManager.revive(resolved, false);
   if (result.error) {
     printError(result.error);
     return;
@@ -403,10 +416,6 @@ async function cmdClear(ctx, args) {
     ctx.tokenTracker.sent[resolved] = 0;
     ctx.tokenTracker.received[resolved] = 0;
   }
-
-  // Wait for agent to start up
-  const agent = ctx.agentManager.agents.get(resolved);
-  const provider = ctx.agentManager.providers[agent.provider];
   printSystem(`Restarting ${resolved}...`);
   await new Promise(r => setTimeout(r, provider.startupDelay));
   ctx.agentManager.setStatus(resolved, 'idle');

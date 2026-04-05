@@ -222,7 +222,7 @@ class PaneManager {
     }
   }
 
-  reviveAgent(agentName) {
+  reviveAgent(agentName, cliArgs = null) {
     const pane = this.panes.get(agentName);
     if (!pane) return false;
 
@@ -235,8 +235,9 @@ class PaneManager {
       execFileSync('tmux', ['respawn-pane', '-t', pane.paneId]);
       // Re-enable logging on the fresh file
       execSync(`tmux pipe-pane -t ${pane.paneId} "cat >> ${pane.logFile}"`);
-      // Start the CLI
-      const cmd = `${pane.provider.command} ${pane.provider.startArgs.join(' ')}`.trim();
+      // Use provided CLI args or default from provider
+      const args = cliArgs || (pane.provider.startArgs ? pane.provider.startArgs : []);
+      const cmd = `${pane.provider.command} ${args.join(' ')}`.trim();
       execFileSync('tmux', ['send-keys', '-t', pane.paneId, '-l', cmd]);
       execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Enter']);
       pane.status = 'starting';

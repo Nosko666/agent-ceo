@@ -105,15 +105,25 @@ class AgentManager {
 
   // ── Reviving ───────────────────────────────────────────
 
-  revive(agentName) {
+  revive(agentName, resume = true) {
     const resolved = this.resolve(agentName);
     if (!resolved) return { error: `Agent not found: ${agentName}` };
 
-    const success = this.paneManager.reviveAgent(resolved);
+    const agent = this.agents.get(resolved);
+    const provider = this.providers[agent.provider];
+
+    // Build CLI args: use resume if sessionId exists and resume requested, else fresh start
+    let cliArgs = null;
+    if (resume && agent.sessionId && provider.getResumeArgs) {
+      cliArgs = provider.getResumeArgs(agent.sessionId);
+    } else if (agent.sessionId && provider.getStartArgs) {
+      // Fresh start with session ID tracking
+      cliArgs = provider.getStartArgs(agent.sessionId);
+    }
+
+    const success = this.paneManager.reviveAgent(resolved, cliArgs);
     if (success) {
-      const agent = this.agents.get(resolved);
-      if (agent) agent.status = 'starting';
-      const provider = this.providers[agent.provider];
+      agent.status = 'starting';
       setTimeout(() => {
         if (agent && agent.status === 'starting') {
           agent.status = 'idle';
@@ -121,7 +131,7 @@ class AgentManager {
           if (pane) pane.status = 'idle';
         }
       }, provider.startupDelay);
-      return { revived: resolved };
+      return { revived: resolved, resumed: resume && !!agent.sessionId };
     }
     return { error: `Failed to revive ${resolved}` };
   }
