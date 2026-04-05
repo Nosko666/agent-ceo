@@ -275,6 +275,48 @@ class Chatroom {
       journalMeta = null,
     } = options;
 
+    // Codex marker injection: prepend marker to first real message
+    let actualPrompt = prompt;
+    const agent = this.agentManager.agents.get(agentName);
+    if (agent && !agent.sessionId && agent.provider === 'codex') {
+      // Generate marker for this conversation (once)
+      if (!agent._codexMarker) {
+        const CodexDiscovery = require('./native/codexDiscovery');
+        agent._codexMarker = CodexDiscovery.generateMarker(agentName);
+        agent._codexMarkerSent = false;
+      }
+
+      if (!agent._codexMarkerSent) {
+        // Journal first, then send (crash-safe ordering)
+        if (this.journal) {
+          this.journal.append({ type: 'codex_marker_sent', agent: agentName, marker: agent._codexMarker });
+        }
+
+        // Prepend marker (internal only — not shown in chatroom)
+        actualPrompt = agent._codexMarker + ' (internal, ignore)\n' + prompt;
+        agent._codexMarkerSent = true;
+
+        // Start async background discovery
+        const CodexDiscovery = require('./native/codexDiscovery');
+        const discovery = CodexDiscovery.startDiscovery({
+          marker: agent._codexMarker,
+          agentName,
+          sessionsDir: null, // uses env var or default
+          agentStartTime: new Date(agent.spawnedAt).getTime(),
+          projectDir: process.cwd(),
+          onFound: (filePath) => {
+            // Record discovered session ID
+            agent.sessionId = filePath; // file path as ID for now
+            if (this.journal) {
+              this.journal.append({ type: 'agent_session', agent: agentName, sessionId: filePath });
+            }
+            this._metaDirty = true;
+          },
+        });
+        agent._codexDiscovery = discovery;
+      }
+    }
+
     const displayName = this.agentManager.displayName(agentName);
 
     // Mark as running
@@ -290,7 +332,7 @@ class Chatroom {
     const hasWriteMode = writeMode || (this.privacy && this.privacy.hasWriteMode(agentName));
 
     // Add mode instruction
-    let fullPrompt = prompt;
+    let fullPrompt = actualPrompt;
     if (hasWriteMode) {
       fullPrompt += '\n[SYSTEM: You have WRITE permission for this response. You may edit files.]';
     } else {
