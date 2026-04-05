@@ -6,7 +6,7 @@
 const fs = require('fs');
 
 const DEFAULT_POLL_MS = 500;
-const DEFAULT_SILENCE_MS = 3000;
+const DEFAULT_SILENCE_MS = 5000;  // 5s silence after last byte = response done
 const DEFAULT_TIMEOUT_MS = 120000;
 
 class ResponseCapture {

@@ -137,18 +137,14 @@ class PaneManager {
     const pane = this.panes.get(agentName);
     if (!pane) return false;
 
-    // Split text into lines and send each via literal send-keys
-    // Using -l flag + execFileSync avoids all shell interpolation risks
-    const lines = text.split('\n');
-    for (const line of lines) {
-      if (line.length > 0) {
-        execFileSync('tmux', ['send-keys', '-t', pane.paneId, '-l', line]);
-      }
-      execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Enter']);
+    // Send as a single line to avoid multi-line editor mode in CLIs like Claude Code.
+    // Multi-line text (Enter after each line) puts Claude into multi-line edit mode
+    // where Enter doesn't submit. Single-line + Enter submits immediately.
+    // Newlines are replaced with ' | ' separator so the prompt stays readable.
+    const singleLine = text.replace(/\n+/g, ' | ').replace(/\s*\|\s*\|\s*/g, ' | ').trim();
+    if (singleLine.length > 0) {
+      execFileSync('tmux', ['send-keys', '-t', pane.paneId, '-l', singleLine]);
     }
-    // Submit: Escape clears any multi-line editing mode, Enter submits.
-    // Claude Code needs this because Enter alone adds newlines in its editor.
-    execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Escape']);
     execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Enter']);
     return true;
   }
