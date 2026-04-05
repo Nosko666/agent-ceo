@@ -19,11 +19,30 @@ class Chatroom {
     this.tagManager = extras.tagManager || null;
     this.tokenTracker = extras.tokenTracker || null;
     this.privacy = extras.privacy || null;
-    this.journal = extras.journal || null;
     this.runningDir = extras.runningDir || null;
     this.rl = null;
     this.running = false;
     this._shuttingDown = false;
+    this._metaDirty = false;
+
+    // Wrap journal so every append auto-marks meta as dirty
+    const rawJournal = extras.journal || null;
+    if (rawJournal) {
+      const self = this;
+      this.journal = new Proxy(rawJournal, {
+        get(target, prop) {
+          if (prop === 'append') {
+            return function (...args) {
+              self._metaDirty = true;
+              return target.append(...args);
+            };
+          }
+          return target[prop];
+        },
+      });
+    } else {
+      this.journal = null;
+    }
     this.healthCheckInterval = null;
     this.autoSaveInterval = null;
     this.tokenWarningInterval = null;
@@ -72,14 +91,16 @@ class Chatroom {
       }
     }, 30000);
 
-    // Debounced meta.json updates (~5s)
+    // Debounced meta.json updates: mark dirty on events, flush at most every 5s
+    this._metaDirty = false;
     this.metaUpdateInterval = setInterval(() => {
-      if (this.runningDir) {
+      if (this._metaDirty && this.runningDir) {
         try {
           const { writeMeta, readMeta } = require('./menu');
           const existing = readMeta(this.runningDir) || {};
           existing.lastActive = new Date().toISOString();
           writeMeta(this.runningDir, existing);
+          this._metaDirty = false;
         } catch { /* silent */ }
       }
     }, 5000);

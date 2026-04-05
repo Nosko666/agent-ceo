@@ -888,8 +888,8 @@ async function main() {
     } catch { /* not tagged */ }
 
     if (!isAgentCeo) {
-      // Check running dir fallback
-      isAgentCeo = fs.existsSync(path.join(RUNNING_DIR, args.attach));
+      // Check running dir fallback — must have meta.json to be a real agent-ceo session
+      isAgentCeo = fs.existsSync(path.join(RUNNING_DIR, args.attach, 'meta.json'));
     }
 
     if (isAgentCeo) {
