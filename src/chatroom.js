@@ -657,6 +657,14 @@ class Chatroom {
         appVersion: '2.0.0',
       };
       this.journal.writeSnapshot(state);
+      // Also flush meta on snapshot
+      if (this._metaDirty && this.runningDir) {
+        const { writeMeta, readMeta } = require('./menu');
+        const existing = readMeta(this.runningDir) || {};
+        existing.lastActive = new Date().toISOString();
+        writeMeta(this.runningDir, existing);
+        this._metaDirty = false;
+      }
     } catch (e) {
       // Silent fail for periodic snapshots — don't crash the chatroom
     }
@@ -690,7 +698,16 @@ class Chatroom {
     if (this.tokenWarningInterval) clearInterval(this.tokenWarningInterval);
     if (this.snapshotInterval) clearInterval(this.snapshotInterval);
 
-    // Final snapshot before exit
+    // Final meta flush + snapshot before exit
+    if (this._metaDirty && this.runningDir) {
+      try {
+        const { writeMeta, readMeta } = require('./menu');
+        const existing = readMeta(this.runningDir) || {};
+        existing.lastActive = new Date().toISOString();
+        writeMeta(this.runningDir, existing);
+        this._metaDirty = false;
+      } catch { /* silent */ }
+    }
     if (this.journal && this.journal.eventCount > 0) {
       this._writeSnapshot();
     }
