@@ -482,7 +482,7 @@ function cmdPreset(ctx) {
 
 function cmdHelp() {
   console.log(`
-${C.bold}${C.cyan}=== agent-ceo v1.0 ===${C.reset}
+${C.bold}${C.cyan}=== agent-ceo v2.0 ===${C.reset}
 
 ${C.bold}Addressing:${C.reset}
   @agent message        Talk to one agent

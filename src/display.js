@@ -20,7 +20,7 @@ const C = {
 function printWelcome(agents) {
   console.log(`
 ${C.bold}${C.cyan}╭─────────────────────────────────────────╮
-│          ${C.white}agent-ceo${C.cyan}  v1.0.0              │
+│          ${C.white}agent-ceo${C.cyan}  v2.0.0              │
 │     You're the CEO. Lead your team.     │
 ╰─────────────────────────────────────────╯${C.reset}
 `);
