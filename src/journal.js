@@ -53,8 +53,10 @@ class Journal {
       }
     }
 
-    // If journal was truncated (empty), check snapshot for the correct seq
-    if (this._seq === 0) {
+    // Always check snapshot for seq — journal may have been truncated after snapshot,
+    // or may have events with lower seq numbers from a post-truncation restart.
+    // Take the max of journal seq and snapshot seq to prevent seq going backwards.
+    {
       const snapshotPath = path.join(dir, 'snapshot.json');
       if (fs.existsSync(snapshotPath)) {
         try {
