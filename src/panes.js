@@ -137,14 +137,17 @@ class PaneManager {
     const pane = this.panes.get(agentName);
     if (!pane) return false;
 
-    // Send as a single line to avoid multi-line editor mode in CLIs like Claude Code.
-    // Multi-line text (Enter after each line) puts Claude into multi-line edit mode
-    // where Enter doesn't submit. Single-line + Enter submits immediately.
-    // Newlines are replaced with ' | ' separator so the prompt stays readable.
-    const singleLine = text.replace(/\n+/g, ' | ').replace(/\s*\|\s*\|\s*/g, ' | ').trim();
-    if (singleLine.length > 0) {
-      execFileSync('tmux', ['send-keys', '-t', pane.paneId, '-l', singleLine]);
-    }
+    // Use tmux load-buffer + paste-buffer for all providers.
+    // Flags: -p = bracketed paste (app treats it as one paste unit)
+    //        -r = real newlines (don't convert LF→CR which would "press Enter" per line)
+    // Then send Enter separately to submit.
+    // This is the proven pattern used by claude-tmux-orchestration, claude_code_agent_farm, etc.
+    const bufName = `agentceo-${agentName}-${Date.now()}`;
+    execSync(`tmux load-buffer -b "${bufName}" -`, { input: text, stdio: ['pipe', 'ignore', 'ignore'] });
+    execSync(`tmux paste-buffer -p -r -d -b "${bufName}" -t ${pane.paneId}`);
+    // Brief pause for the CLI to process the pasted text
+    execSync('sleep 0.3');
+    // Submit
     execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Enter']);
     return true;
   }
