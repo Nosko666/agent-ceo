@@ -109,6 +109,43 @@ class Journal {
   }
 
   setSeq(seq) { this._seq = seq; }
+
+  writeSnapshot(state) {
+    const snapshotPath = path.join(this.dir, 'snapshot.json');
+    const prevPath = path.join(this.dir, 'snapshot.prev.json');
+    const tmpPath = path.join(this.dir, 'snapshot.json.tmp');
+
+    if (fs.existsSync(snapshotPath)) {
+      try { fs.copyFileSync(snapshotPath, prevPath); } catch { /* ignore */ }
+    }
+
+    const data = { seq: this._seq, ...state, snapshotAt: new Date().toISOString() };
+    fs.writeFileSync(tmpPath, JSON.stringify(data));
+    fs.renameSync(tmpPath, snapshotPath);
+
+    this.truncate();
+  }
+
+  loadSnapshot() {
+    const snapshotPath = path.join(this.dir, 'snapshot.json');
+    const prevPath = path.join(this.dir, 'snapshot.prev.json');
+
+    if (fs.existsSync(snapshotPath)) {
+      try { return JSON.parse(fs.readFileSync(snapshotPath, 'utf-8')); }
+      catch { /* corrupt, try prev */ }
+    }
+
+    if (fs.existsSync(prevPath)) {
+      try { return JSON.parse(fs.readFileSync(prevPath, 'utf-8')); }
+      catch { /* both corrupt */ }
+    }
+
+    return null;
+  }
+
+  needsSnapshot(maxEvents = 200, maxBytes = 1048576) {
+    return this._eventsSinceSnapshot >= maxEvents || this.journalSize >= maxBytes;
+  }
 }
 
 module.exports = Journal;
