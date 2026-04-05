@@ -466,6 +466,20 @@ async function runChatroom(sessionId) {
   const paneManager = new PaneManager(setup.sessionLogDir);
   paneManager.restoreFromSetup(setup);
 
+  // If this is a recovery (chatroom restart, not fresh session),
+  // set byte offsets to EOF so we don't replay old output
+  if (setup.isRecovery) {
+    for (const [name] of paneManager.panes) {
+      const pane = paneManager.panes.get(name);
+      try {
+        const stats = fs.statSync(pane.logFile);
+        if (stats.size > 0) {
+          pane.byteOffset = stats.size;
+        }
+      } catch { /* new file, offset stays 0 */ }
+    }
+  }
+
   // ── Initialize InboxManager ──────────────────────────
   const inboxManager = new InboxManager();
 
@@ -555,17 +569,51 @@ async function runChatroom(sessionId) {
     }
   }
 
-  // ── Wait for agents to initialize ────────────────────
-  const providers = [...new Set(Object.values(setup.agents).map(a => a.provider))];
-  const maxDelay = Math.max(...providers.map(p => {
-    try { return require(`./providers/${p}`).startupDelay; } catch { return 3000; }
-  }));
-  console.log(`  Waiting ${maxDelay / 1000}s for agents to initialize...\n`);
-  await new Promise(resolve => setTimeout(resolve, maxDelay));
+  // ── Wait for agents to initialize (or check status on recovery) ──
+  if (setup.isRecovery) {
+    const { printSystem, printWarning } = require('./display');
+    console.log('  Agent status:');
+    for (const [name] of agentManager.agents) {
+      if (paneManager.isPaneDead(name)) {
+        agentManager.setStatus(name, 'dead');
+        printWarning(`  ${name}: dead (pane gone) — /revive ${name}`);
+        continue;
+      }
 
-  // Mark all agents as idle
-  for (const [name] of agentManager.agents) {
-    agentManager.setStatus(name, 'idle');
+      // Check if agent shows a prompt pattern
+      try {
+        const pane = paneManager.panes.get(name);
+        const provider = require(`./providers/${pane.provider.name || pane.provider}`);
+        if (fs.existsSync(pane.logFile)) {
+          const content = fs.readFileSync(pane.logFile, 'utf-8');
+          const lastLines = content.split('\n').slice(-5).join('\n');
+          if (provider.promptPattern && provider.promptPattern.test(lastLines)) {
+            agentManager.setStatus(name, 'idle');
+            printSystem(`  ${name}: idle (prompt detected)`);
+          } else {
+            agentManager.setStatus(name, 'running');
+            printWarning(`  ${name}: busy (no prompt) — /focus ${name} to inspect`);
+          }
+        } else {
+          agentManager.setStatus(name, 'idle');
+        }
+      } catch {
+        agentManager.setStatus(name, 'idle');
+      }
+    }
+    console.log();
+  } else {
+    const providers = [...new Set(Object.values(setup.agents).map(a => a.provider))];
+    const maxDelay = Math.max(...providers.map(p => {
+      try { return require(`./providers/${p}`).startupDelay; } catch { return 3000; }
+    }));
+    console.log(`  Waiting ${maxDelay / 1000}s for agents to initialize...\n`);
+    await new Promise(resolve => setTimeout(resolve, maxDelay));
+
+    // Mark all agents as idle
+    for (const [name] of agentManager.agents) {
+      agentManager.setStatus(name, 'idle');
+    }
   }
 
   // ── Start the chatroom REPL ──────────────────────────
@@ -590,6 +638,87 @@ async function runChatroom(sessionId) {
   process.on('SIGTERM', () => chatroom.shutdown());
 
   chatroom.start();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Recovery — respawn chatroom in pane 0 of existing session
+// ═══════════════════════════════════════════════════════════
+
+function recoverChatroom(sessionInfo) {
+  const { RUNNING_DIR } = require('./menu');
+  const sessionName = sessionInfo.sessionName;
+
+  console.log(`\n  Recovering chatroom for session: ${sessionName}...\n`);
+
+  // Get pane 0
+  let pane0;
+  try {
+    pane0 = execSync(
+      `tmux list-panes -t "${sessionName}" -F "#{pane_id}" | head -1`,
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    ).toString().trim();
+  } catch (e) {
+    console.error(`  Failed to find pane 0: ${e.message}`);
+    process.exit(1);
+  }
+
+  // Discover agent panes by title
+  const agents = {};
+  const sessionLogDir = path.join('/tmp/agent-ceo', sessionName);
+  try {
+    const output = execSync(
+      `tmux list-panes -t "${sessionName}" -F "#{pane_id} #{pane_title}" 2>/dev/null`,
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    ).toString().trim();
+
+    for (const line of output.split('\n')) {
+      const parts = line.trim().split(' ');
+      const paneId = parts[0];
+      const title = parts.slice(1).join(' ');
+      if (title && title !== 'chatroom' && title !== '' && paneId !== pane0) {
+        const providerMatch = title.match(/^([a-z]+)\d+$/);
+        const provider = providerMatch ? providerMatch[1] : 'unknown';
+        const logFile = path.join(sessionLogDir, `${title}.log`);
+        agents[title] = { paneId, logFile, provider };
+      }
+    }
+  } catch { /* ignore */ }
+
+  console.log(`  Found ${Object.keys(agents).length} agent pane(s)`);
+
+  // Re-enable pipe-pane for each agent (in case it stopped)
+  for (const [name, info] of Object.entries(agents)) {
+    try {
+      execSync(`tmux pipe-pane -o -t ${info.paneId} "cat >> ${info.logFile}" 2>/dev/null`);
+    } catch { /* ignore */ }
+  }
+
+  // Build setup state for the chatroom process
+  const setupState = {
+    sessionName,
+    pane0,
+    agents,
+    sessionLogDir,
+    isRecovery: true,
+    originalArgs: { agents: null, session: null, resume: false },
+  };
+
+  const setupFile = setupFileFor(sessionName);
+  fs.writeFileSync(setupFile, JSON.stringify(setupState));
+
+  // Respawn pane 0 with chatroom
+  const scriptPath = path.resolve(__dirname, '../bin/agent-ceo');
+  const chatCmd = `node "${scriptPath}" --_chatroom "${sessionName}"`;
+  try {
+    execFileSync('tmux', ['respawn-pane', '-k', '-t', pane0, chatCmd]);
+  } catch {
+    // Fallback: send-keys
+    execFileSync('tmux', ['send-keys', '-t', pane0, '-l', chatCmd]);
+    execFileSync('tmux', ['send-keys', '-t', pane0, 'Enter']);
+  }
+
+  console.log('  Chatroom respawned. Attaching...\n');
+  attachToSession(sessionName);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -821,16 +950,12 @@ async function main() {
     if (selected.type === 'join') {
       attachToSession(selected.data.sessionName);
     } else if (selected.type === 'recover') {
-      // Chatroom down — for now, attach and let user see it
-      // Full recovery will be wired in Task 10
       console.log(`\n  Session ${selected.data.sessionName} has chatroom down.`);
       const recAnswer = await prompt('  [R] Recover chatroom (default)  |  [T] Attach to tmux only\n  > ');
       if (recAnswer.toLowerCase() === 't') {
         attachToSession(selected.data.sessionName);
       } else {
-        // Placeholder — Task 10 will implement full recovery
-        console.log('  Recovery not yet implemented. Attaching to tmux...');
-        attachToSession(selected.data.sessionName);
+        recoverChatroom(selected.data);
       }
     } else if (selected.type === 'resume') {
       args.session = selected.data.name;
