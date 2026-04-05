@@ -16,8 +16,10 @@ class ResponseCapture {
 
   /**
    * Wait for an agent's response to complete.
-   * Records byte offset before sending, then polls for new content.
-   * Returns the response text when done.
+   * Polls the log file for new content. Completes when:
+   *   1. Provider prompt pattern detected (fast path)
+   *   2. No new bytes for silenceMs (silence detection)
+   *   3. Hard timeout (fallback)
    *
    * @param {string} agentName
    * @param {object} options
@@ -36,11 +38,10 @@ class ResponseCapture {
     }
 
     const provider = pane.provider;
-    const startOffset = pane.byteOffset;
 
     return new Promise((resolve) => {
-      let lastNewDataTime = null;
-      let accumulatedText = '';
+      let lastSize = 0;          // track actual file size to detect real growth
+      let lastGrowthTime = null; // when the file last grew (not just peeked)
       let settled = false;
       const startTime = Date.now();
 
@@ -51,9 +52,9 @@ class ResponseCapture {
         if (Date.now() - startTime > timeoutMs) {
           settled = true;
           clearInterval(poll);
-          accumulatedText = this.paneManager.readNewOutput(agentName) || accumulatedText;
+          const fullText = this.paneManager.readNewOutput(agentName) || '';
           resolve({
-            text: this._cleanResponse(accumulatedText, provider),
+            text: this._cleanResponse(fullText, provider),
             partial: true,
             timedOut: true,
           });
@@ -64,27 +65,32 @@ class ResponseCapture {
         if (this.paneManager.isPaneDead(agentName)) {
           settled = true;
           clearInterval(poll);
-          accumulatedText = this.paneManager.readNewOutput(agentName) || accumulatedText;
+          const fullText = this.paneManager.readNewOutput(agentName) || '';
           resolve({
-            text: this._cleanResponse(accumulatedText, provider),
+            text: this._cleanResponse(fullText, provider),
             partial: true,
             timedOut: false,
           });
           return;
         }
 
-        // Check for new content
-        const newText = this.paneManager.peekNewOutput(agentName);
-        if (newText && newText.length > 0) {
-          lastNewDataTime = Date.now();
-          accumulatedText = newText;
+        // Check for new content by comparing actual output size
+        const peeked = this.paneManager.peekNewOutput(agentName);
+        const currentSize = peeked ? peeked.length : 0;
 
-          // Check if prompt character appeared (response done)
-          if (provider.promptPattern && provider.promptPattern.test(newText)) {
+        if (currentSize > 0 && currentSize !== lastSize) {
+          // File actually grew — real new data
+          lastGrowthTime = Date.now();
+          lastSize = currentSize;
+
+          // Check if prompt pattern appeared (response done — fast path)
+          if (provider.promptPattern && provider.promptPattern.test(peeked)) {
             // Wait one more poll to make sure nothing else is coming
             setTimeout(() => {
-              const finalCheck = this.paneManager.peekNewOutput(agentName);
-              if (!finalCheck || finalCheck === newText || finalCheck.length === newText.length) {
+              const recheck = this.paneManager.peekNewOutput(agentName);
+              const recheckSize = recheck ? recheck.length : 0;
+              if (recheckSize === currentSize) {
+                // No more growth — prompt is stable, we're done
                 settled = true;
                 clearInterval(poll);
                 const fullText = this.paneManager.readNewOutput(agentName) || '';
@@ -100,8 +106,8 @@ class ResponseCapture {
           }
         }
 
-        // Silence check — if we got data but nothing new for silenceMs
-        if (lastNewDataTime && (Date.now() - lastNewDataTime > silenceMs)) {
+        // Silence check — file grew at some point but hasn't grown for silenceMs
+        if (lastGrowthTime && currentSize > 0 && (Date.now() - lastGrowthTime > silenceMs)) {
           settled = true;
           clearInterval(poll);
           const fullText = this.paneManager.readNewOutput(agentName) || '';
@@ -117,21 +123,19 @@ class ResponseCapture {
 
   /**
    * Clean up raw captured text:
-   * - Strip the input we sent (first lines are our message)
-   * - Strip prompt characters
-   * - Strip provider-specific noise
+   * - Strip provider-specific noise patterns
+   * - Remove prompt lines at the end
+   * - Trim whitespace
    */
   _cleanResponse(text, provider) {
     let cleaned = text;
 
-    // Strip provider-specific patterns
     if (provider.stripPatterns) {
       for (const pattern of provider.stripPatterns) {
         cleaned = cleaned.replace(pattern, '');
       }
     }
 
-    // Remove prompt lines at the end
     if (provider.promptPattern) {
       const lines = cleaned.split('\n');
       while (lines.length > 0 && provider.promptPattern.test(lines[lines.length - 1])) {
@@ -140,9 +144,7 @@ class ResponseCapture {
       cleaned = lines.join('\n');
     }
 
-    // Trim whitespace
     cleaned = cleaned.trim();
-
     return cleaned;
   }
 }

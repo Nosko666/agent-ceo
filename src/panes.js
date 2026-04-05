@@ -297,9 +297,13 @@ class PaneManager {
 
   stripAnsi(text) {
     return text
-      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')    // standard ANSI
-      .replace(/\x1b\][^\x07]*\x07/g, '')         // OSC sequences
+      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')    // CSI sequences (including ?-prefixed like \x1b[?2004h)
+      .replace(/\x1b\][^\x07]*\x07/g, '')         // OSC sequences (title changes etc.)
+      .replace(/\x1b\[>[0-9;]*[a-zA-Z]/g, '')     // private mode CSI (>1u etc.)
       .replace(/\x1b\[[0-9;]*[HJK]/g, '')         // cursor movement
+      .replace(/\x1b>/g, '')                        // DECKPNM
+      .replace(/\x1b=/g, '')                        // DECKPAM
+      .replace(/\x1b\[>[0-9;]*[a-z]/g, '')         // more private sequences
       .replace(/\r/g, '');                          // carriage returns
   }
 
