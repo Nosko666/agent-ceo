@@ -70,7 +70,10 @@ class Chatroom {
       if (this.journal && this.journal.needsSnapshot()) {
         this._writeSnapshot();
       }
-      // Update meta.json lastActive
+    }, 30000);
+
+    // Debounced meta.json updates (~5s)
+    this.metaUpdateInterval = setInterval(() => {
       if (this.runningDir) {
         try {
           const { writeMeta, readMeta } = require('./menu');
@@ -79,7 +82,7 @@ class Chatroom {
           writeMeta(this.runningDir, existing);
         } catch { /* silent */ }
       }
-    }, 30000);
+    }, 5000);
 
     // Periodic journal snapshot every 60s
     this.snapshotInterval = setInterval(() => {
@@ -662,6 +665,7 @@ class Chatroom {
     this.running = false;
     if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
     if (this.autoSaveInterval) clearInterval(this.autoSaveInterval);
+    if (this.metaUpdateInterval) clearInterval(this.metaUpdateInterval);
     if (this.tokenWarningInterval) clearInterval(this.tokenWarningInterval);
     if (this.snapshotInterval) clearInterval(this.snapshotInterval);
 

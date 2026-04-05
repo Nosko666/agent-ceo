@@ -784,7 +784,8 @@ async function createNewSession(args) {
         const idxB = order.indexOf(nameB);
         const posA = idxA >= 0 ? idxA : order.length;
         const posB = idxB >= 0 ? idxB : order.length;
-        return posA - posB;
+        if (posA !== posB) return posA - posB;
+        return nameA.localeCompare(nameB); // alphabetical tie-break
       });
 
       for (const file of providerFiles) {
@@ -874,16 +875,34 @@ async function main() {
 
   // Direct attach
   if (args.attach) {
-    // Check if chatroom is down and auto-recover
-    const { buildActiveSessionInfo } = require('./menu');
+    const { buildActiveSessionInfo, RUNNING_DIR } = require('./menu');
+
+    // Only check for recovery if this is an agent-ceo session
+    let isAgentCeo = false;
     try {
-      const info = buildActiveSessionInfo(args.attach);
-      if (!info.chatroomAlive) {
-        console.log(`  Session ${args.attach} has chatroom down. Recovering...`);
-        recoverChatroom(info);
-        return;
-      }
-    } catch { /* session might not be agent-ceo, just attach */ }
+      const tagged = execSync(
+        `tmux show-option -t "${args.attach}" -v @agent_ceo 2>/dev/null`,
+        { stdio: ['ignore', 'pipe', 'ignore'] }
+      ).toString().trim();
+      if (tagged === '1') isAgentCeo = true;
+    } catch { /* not tagged */ }
+
+    if (!isAgentCeo) {
+      // Check running dir fallback
+      isAgentCeo = fs.existsSync(path.join(RUNNING_DIR, args.attach));
+    }
+
+    if (isAgentCeo) {
+      try {
+        const info = buildActiveSessionInfo(args.attach);
+        if (!info.chatroomAlive) {
+          console.log(`  Session ${args.attach} has chatroom down. Recovering...`);
+          recoverChatroom(info);
+          return;
+        }
+      } catch { /* ignore */ }
+    }
+
     attachToSession(args.attach);
     return;
   }

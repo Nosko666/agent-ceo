@@ -26,7 +26,23 @@ function load(baseDir) {
     try { userConfig = JSON.parse(raw); }
     catch (e) { throw new ConfigParseError(configPath, e); }
   }
-  return { ...BUILT_IN_DEFAULTS, ...userConfig };
+  const merged = { ...BUILT_IN_DEFAULTS, ...userConfig };
+
+  // Env var overrides (CLI flags override these in the caller)
+  if (process.env.AGENT_CEO_AGENTS_PER_WINDOW) {
+    merged.agentsPerWindow = parseInt(process.env.AGENT_CEO_AGENTS_PER_WINDOW, 10);
+  }
+  if (process.env.AGENT_CEO_CODEX_SESSIONS_DIR) {
+    merged.codexSessionsDir = process.env.AGENT_CEO_CODEX_SESSIONS_DIR;
+  }
+  if (process.env.AGENT_CEO_RUNTIME_DIR) {
+    merged.runtimeDir = process.env.AGENT_CEO_RUNTIME_DIR;
+  }
+  if (process.env.AGENT_CEO_FOCUS_ON_JOIN !== undefined) {
+    merged.focusOnJoin = process.env.AGENT_CEO_FOCUS_ON_JOIN !== '0' && process.env.AGENT_CEO_FOCUS_ON_JOIN !== 'false';
+  }
+
+  return merged;
 }
 
 function save(baseDir, config) {
