@@ -367,13 +367,17 @@ function launchInTmux(args) {
       // Start logging BEFORE starting the CLI
       execSync(`tmux pipe-pane -t ${paneId} "cat >> ${logFile}"`);
 
-      // Start the agent CLI (shell is ready for input)
-      const cmd = `${provider.command} ${provider.startArgs.join(' ')}`.trim();
+      // Generate native session ID (Claude: UUID; Codex: null, discovered later)
+      const sessionId = provider.generateSessionId ? provider.generateSessionId() : null;
+
+      // Start the agent CLI with session ID if available
+      const cliArgs = provider.getStartArgs ? provider.getStartArgs(sessionId) : provider.startArgs;
+      const cmd = `${provider.command} ${cliArgs.join(' ')}`.trim();
       execFileSync('tmux', ['send-keys', '-t', paneId, '-l', cmd]);
       execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
 
-      agentPanes[name] = { paneId, logFile, provider: providerName };
-      console.log(`  ✅ ${name} launched`);
+      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId };
+      console.log(`  ✅ ${name} launched${sessionId ? ` (session: ${sessionId.substring(0, 8)}...)` : ''}`);
     }
 
     // Arrange layout
@@ -494,6 +498,7 @@ async function runChatroom(sessionId) {
       customName: null,
       status: 'starting',
       spawnedAt: new Date().toISOString(),
+      sessionId: info.sessionId || null,
     });
     inboxManager.register(name);
 
@@ -515,6 +520,16 @@ async function runChatroom(sessionId) {
   const privacy = new PrivacyManager(agentManager);
   const tokenTracker = new TokenTracker(agentManager, paneManager);
   const tagManager = new TagManager(session);
+
+  // Journal session IDs for agents that have them (at spawn time)
+  if (!setup.isRecovery) {
+    for (const [name] of agentManager.agents) {
+      const sid = agentManager.getSessionId(name);
+      if (sid && journal) {
+        journal.append({ type: 'agent_session', agent: name, sessionId: sid });
+      }
+    }
+  }
 
   // ── Restore saved session if resuming ────────────────
   const resumeSession = setup.originalArgs.session;

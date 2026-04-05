@@ -60,6 +60,7 @@ class AgentManager {
       customName: null,
       status: 'starting',
       spawnedAt: new Date().toISOString(),
+      sessionId: null,
     });
 
     // Mark as ready after startup delay
@@ -228,6 +229,16 @@ class AgentManager {
   getStatus(agentName) {
     const agent = this.agents.get(agentName);
     return agent ? agent.status : null;
+  }
+
+  setSessionId(agentName, sessionId) {
+    const agent = this.agents.get(agentName);
+    if (agent) agent.sessionId = sessionId;
+  }
+
+  getSessionId(agentName) {
+    const agent = this.agents.get(agentName);
+    return agent ? agent.sessionId : null;
   }
 
   list() {
