@@ -484,6 +484,32 @@ function cmdFull(ctx, args) {
   }
 }
 
+function cmdFullAuto(ctx, args) {
+  const AutoRunner = require('./auto');
+  if (!ctx.chatroom.autoRunner) { printError('No auto jobs.'); return; }
+
+  const runner = ctx.chatroom.autoRunner;
+  const jobId = args[0] ? parseInt(args[0], 10) : null;
+  const job = jobId ? runner.getJob(jobId) : runner.getLastJob();
+
+  if (!job) { printError('Auto job not found.'); return; }
+
+  const roundFilter = args.includes('--round') ? parseInt(args[args.indexOf('--round') + 1], 10) : null;
+  const agentFilter = args.includes('--agent') ? args[args.indexOf('--agent') + 1] : null;
+
+  printSystem(`Auto job ${job.id}: ${job.goal}`);
+  printSystem(`State: ${job.state} | Rounds: ${job.round}/${job.maxRounds}`);
+  console.log();
+
+  for (const r of job.responses) {
+    if (roundFilter && r.round !== roundFilter) continue;
+    if (agentFilter && r.agent !== agentFilter) continue;
+
+    const provider = ctx.agentManager.agents.get(r.agent)?.provider || 'unknown';
+    printAgent(`Round ${r.round} — ${r.step} (${r.agent})`, r.text, provider);
+  }
+}
+
 function cmdStatus(ctx) {
   // Combined status view
   const agents = ctx.agentManager.list();
@@ -586,6 +612,18 @@ ${C.bold}Workflows:${C.reset}
   /research [agents] <topic> Parallel investigation
   /preset                    List available workflows
 
+${C.bold}Auto (autonomous pipeline):${C.reset}
+  /auto <goal>              Start pipeline (plan→debate→consensus→implement→review)
+  /auto status              Show current job state
+  /auto pause / resume      Pause / resume execution
+  /auto stop                Stop current job
+  /auto verbose on|off      Toggle full output
+  /auto rounds <n>          Change max rounds
+  /full auto [jobId]        Show full auto job transcript
+  Enter (empty line)        Quick-pause running auto job
+  Options: --rounds N  --minutes N  --pipeline p1,p2  --verbose
+           --participants a,b  --planner X  --critic X  --no-roles
+
 ${C.bold}Files:${C.reset}  /pin  /unpin  /pins
 
 ${C.bold}Tags:${C.reset}
@@ -629,6 +667,7 @@ module.exports = {
   cmdSummarize,
   cmdClear,
   cmdFull,
+  cmdFullAuto,
   cmdStatus,
   cmdPreset,
   cmdDetach,

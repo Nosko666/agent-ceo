@@ -143,7 +143,7 @@ class AutoRunner {
   }
 
   // ---- State machine: job lifecycle ---------------------------------------
-  createJob({ goal, pipeline, participants, maxRounds, maxTimeMs }) {
+  createJob({ goal, pipeline, participants, maxRounds, maxTimeMs, roles, verbose }) {
     if (this.currentJob && this.currentJob.state === 'running') {
       throw new Error('Job already running');
     }
@@ -153,16 +153,17 @@ class AutoRunner {
 
     const id = this._nextJobId++;
     const now = Date.now();
-    const roles = AutoRunner.assignRoles(participants);
+    const assignedRoles = roles || AutoRunner.assignRoles(participants);
 
     const job = {
       id,
       goal,
       pipeline: [...pipeline],
       participants: [...participants],
-      roles,
+      roles: assignedRoles,
       maxRounds,
       maxTimeMs,
+      verbose: verbose || false,
       state: 'running',
       round: 0,
       stepIndex: 0,
@@ -185,11 +186,12 @@ class AutoRunner {
   }
 
   resume() {
-    if (this.state !== 'paused') return;
+    if (this.state !== 'paused') return false;
     this.state = 'running';
     if (this.currentJob) {
       delete this.currentJob.pauseReason;
     }
+    return true;
   }
 
   stop(journal = null) {

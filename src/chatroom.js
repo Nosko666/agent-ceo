@@ -43,6 +43,7 @@ class Chatroom {
     } else {
       this.journal = null;
     }
+    this.autoRunner = null;
     this._codexPendingMarkers = new Map(); // marker → { agentName, discovery }
     this.healthCheckInterval = null;
     this.autoSaveInterval = null;
@@ -65,6 +66,15 @@ class Chatroom {
     this.rl.on('line', async (line) => {
       const input = line.trim();
       if (!input) {
+        // Enter on empty line pauses /auto if running
+        if (this.autoRunner && this.autoRunner.state === 'running') {
+          this.autoRunner.pause('enter');
+          if (this.journal) {
+            this.journal.append({ type: 'auto_pause', jobId: this.autoRunner.currentJob.id, reason: 'enter' });
+          }
+          const { printDim } = require('./display');
+          printDim('  [auto] Paused. /auto resume to continue.');
+        }
         this.rl.prompt();
         return;
       }
@@ -127,6 +137,15 @@ class Chatroom {
   // ── Input handling ─────────────────────────────────────
 
   async handleInput(input) {
+    // Auto-pause on any manual input while /auto is running
+    if (this.autoRunner && this.autoRunner.state === 'running') {
+      this.autoRunner.pause('manual_input');
+      if (this.journal) {
+        this.journal.append({ type: 'auto_pause', jobId: this.autoRunner.currentJob.id, reason: 'manual_input' });
+      }
+      printDim('  [auto] Paused (manual input). /auto resume to continue.');
+    }
+
     // /commands
     if (input.startsWith('/')) {
       await this.handleCommand(input);
@@ -270,6 +289,7 @@ class Chatroom {
   async sendAndCapture(agentName, prompt, options = {}) {
     const {
       writeMode = false,
+      forceReadOnly = false,
       privateMode = false,
       display: displayMode = 'full',
       broadcastTo = 'all',
@@ -314,7 +334,7 @@ class Chatroom {
     // 'hidden' — no output
 
     // Check persistent write mode from privacy manager
-    const hasWriteMode = writeMode || (this.privacy && this.privacy.hasWriteMode(agentName));
+    const hasWriteMode = forceReadOnly ? false : (writeMode || (this.privacy && this.privacy.hasWriteMode(agentName)));
 
     // Add mode instruction
     let fullPrompt = actualPrompt;
@@ -623,7 +643,13 @@ class Chatroom {
 
       case 'preset':    cmd.cmdPreset(ctx); break;
       case 'summarize': cmd.cmdSummarize(ctx, args); break;
-      case 'full':      cmd.cmdFull(ctx, args); break;
+      case 'full':
+        if (args[0] === 'auto') {
+          cmd.cmdFullAuto(ctx, args.slice(1));
+        } else {
+          cmd.cmdFull(ctx, args);
+        }
+        break;
       case 'status':    cmd.cmdStatus(ctx); break;
       case 'help':      cmd.cmdHelp(); break;
       case 'detach':    cmd.cmdDetach(ctx); break;
@@ -631,6 +657,10 @@ class Chatroom {
       case 'quit':
       case 'exit':
         this.confirmAndShutdown();
+        break;
+
+      case 'auto':
+        await this.handleAutoCommand(args);
         break;
 
       default:
@@ -692,6 +722,132 @@ class Chatroom {
     if (result && result.error) {
       printError(result.error);
     }
+  }
+
+  // ── /auto command handler ─────────────────────────────
+
+  async handleAutoCommand(args) {
+    const AutoRunner = require('./auto');
+    const { printSystem, printError, printWarning } = require('./display');
+
+    if (!this.autoRunner) {
+      this.autoRunner = new AutoRunner();
+    }
+
+    const subCmd = args[0] ? args[0].toLowerCase() : 'status';
+
+    // Control commands
+    if (subCmd === 'status') {
+      const status = this.autoRunner.getStatus();
+      if (!status.currentJob) { printSystem('No auto job running.'); return; }
+      const cj = status.currentJob;
+      printSystem(`Auto job ${cj.id}: ${status.state} — ${cj.step || 'idle'} (round ${cj.round}/${cj.maxRounds})`);
+      return;
+    }
+
+    if (subCmd === 'pause') {
+      this.autoRunner.pause('manual');
+      if (this.journal) this.journal.append({ type: 'auto_pause', jobId: this.autoRunner.currentJob.id, reason: 'manual' });
+      printSystem('Auto paused.');
+      return;
+    }
+
+    if (subCmd === 'resume') {
+      if (!this.autoRunner.resume()) { printError('No paused auto job.'); return; }
+      const roundsIdx = args.indexOf('--rounds');
+      if (roundsIdx >= 0 && args[roundsIdx + 1]) {
+        this.autoRunner.addRounds(parseInt(args[roundsIdx + 1], 10));
+      }
+      if (this.journal) this.journal.append({ type: 'auto_resume', jobId: this.autoRunner.currentJob.id });
+      printSystem('Auto resumed.');
+      await this.autoRunner.run(this);
+      return;
+    }
+
+    if (subCmd === 'stop') {
+      if (!this.autoRunner.currentJob) { printError('No auto job to stop.'); return; }
+      const jobId = this.autoRunner.currentJob.id;
+      this.autoRunner.stop(this.journal);
+      printSystem(`Auto job ${jobId} stopped.`);
+      return;
+    }
+
+    if (subCmd === 'verbose') {
+      if (!this.autoRunner.currentJob) { printError('No auto job.'); return; }
+      const mode = args[1] ? args[1].toLowerCase() : '';
+      this.autoRunner.currentJob.verbose = (mode === 'on');
+      printSystem(`Auto verbose: ${mode === 'on' ? 'ON' : 'OFF'}`);
+      return;
+    }
+
+    if (subCmd === 'rounds') {
+      if (!this.autoRunner.currentJob) { printError('No auto job.'); return; }
+      const n = parseInt(args[1], 10);
+      if (isNaN(n)) { printError('Usage: /auto rounds <number>'); return; }
+      this.autoRunner.setRounds(n);
+      printSystem(`Auto maxRounds set to ${n}.`);
+      return;
+    }
+
+    // Start new job
+    if (this.autoRunner.state !== 'idle') {
+      printError(`Auto job ${this.autoRunner.currentJob.id} is already ${this.autoRunner.state}. /auto stop first.`);
+      return;
+    }
+
+    // Parse flags
+    let pipeline = AutoRunner.DEFAULT_PIPELINE;
+    let maxRounds = 10;
+    let maxMinutes = 30;
+    let verbose = false;
+    let noRoles = false;
+    let participantNames = null;
+    const roleOverrides = {};
+    const goalParts = [];
+
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--pipeline') { pipeline = args[++i].split(','); }
+      else if (arg === '--rounds') { maxRounds = parseInt(args[++i], 10); }
+      else if (arg === '--minutes') { maxMinutes = parseInt(args[++i], 10); }
+      else if (arg === '--verbose') { verbose = true; }
+      else if (arg === '--no-roles') { noRoles = true; }
+      else if (arg === '--participants') { participantNames = args[++i].split(','); }
+      else if (arg === '--planner') { roleOverrides.planner = args[++i]; }
+      else if (arg === '--critic') {
+        const val = args[++i];
+        roleOverrides.critic = val.includes(',') ? val.split(',') : val;
+      }
+      else if (arg === '--implementer') { roleOverrides.implementer = args[++i]; }
+      else if (arg === '--reviewer') { roleOverrides.reviewer = args[++i]; }
+      else { goalParts.push(arg); }
+    }
+
+    const goal = goalParts.join(' ');
+    if (!goal) { printError('Usage: /auto <goal>'); return; }
+
+    const participants = participantNames
+      ? participantNames.map(n => this.agentManager.resolve(n)).filter(Boolean)
+      : [...this.agentManager.agents.keys()];
+
+    if (participants.length === 0) { printError('No agents available.'); return; }
+
+    try { AutoRunner.validatePipeline(pipeline); }
+    catch (e) { printError(e.message); return; }
+
+    const roles = AutoRunner.assignRoles(participants, { noRoles, ...roleOverrides });
+
+    const job = this.autoRunner.createJob({ goal, pipeline, participants, maxRounds, maxTimeMs: maxMinutes * 60 * 1000, roles, verbose });
+
+    if (this.journal) {
+      this.journal.append({ type: 'auto_start', jobId: job.id, goal, pipeline: job.pipeline, participants: job.participants });
+    }
+
+    printSystem(`Auto job ${job.id} started: ${goal}`);
+    printSystem(`Pipeline: ${pipeline.join(' → ')} | Rounds: ${maxRounds} | Time: ${maxMinutes}m`);
+    printSystem(`Participants: ${participants.join(', ')}${roles.solo ? ' (solo mode)' : ''}`);
+
+    await this.autoRunner.run(this);
   }
 
   // ── Journal snapshot ───────────────────────────────────
