@@ -226,3 +226,4 @@ class WorkflowManager {
 }
 
 module.exports = WorkflowManager;
+module.exports.BUILTINS = BUILTINS;
