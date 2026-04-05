@@ -759,6 +759,185 @@ function recoverChatroom(sessionInfo) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// Recovery — VPS reboot: tmux gone, running dir still has
+// journal + snapshots.  Rebuild tmux session from scratch,
+// resume native agent sessions where possible.
+// ═══════════════════════════════════════════════════════════
+
+async function recoverFromReboot(sessionInfo) {
+  const { RUNNING_DIR, writeMeta, readMeta } = require('./menu');
+  const { printSystem, printWarning } = require('./display');
+
+  const originalName = sessionInfo.sessionName;
+  const runningDir = path.join(RUNNING_DIR, originalName);
+  console.log(`\n  Recovering from VPS reboot: ${sessionInfo.label}...\n`);
+
+  // Load meta for team composition
+  const meta = readMeta(runningDir);
+  if (!meta || !meta.team) {
+    console.error('  Cannot recover: no team information in meta.json');
+    process.exit(1);
+  }
+
+  // Load journal + snapshot for session IDs
+  const journal = new Journal(runningDir);
+  const snapshot = journal.loadSnapshot();
+  const events = snapshot ? journal.replay(snapshot.seq) : journal.replay();
+
+  // Collect session IDs
+  const sessionIds = {};
+  // From snapshot
+  if (snapshot && snapshot.agents && snapshot.agents.agents) {
+    for (const [name, agent] of Object.entries(snapshot.agents.agents)) {
+      if (agent.sessionId) sessionIds[name] = agent.sessionId;
+    }
+  }
+  // Override with newer journal events
+  for (const e of events) {
+    if (e.type === 'agent_session') {
+      sessionIds[e.agent] = e.sessionId;
+    }
+  }
+
+  // Build agent list
+  const agentList = Object.entries(meta.team).map(([name, provider]) => ({
+    name,
+    provider,
+    sessionId: sessionIds[name] || null,
+  }));
+
+  console.log(`  Team: ${agentList.map(a => `${a.name}${a.sessionId ? ' (native)' : ''}`).join(', ')}`);
+
+  // Allocate a new tmux session name
+  const sessionName = allocateSessionName();
+
+  // Rename running dir if session name changed (maintain dir==tmux invariant)
+  let actualRunningDir = runningDir;
+  if (sessionName !== originalName) {
+    const newRunningDir = path.join(RUNNING_DIR, sessionName);
+    try {
+      fs.renameSync(runningDir, newRunningDir);
+      actualRunningDir = newRunningDir;
+    } catch (e) {
+      console.error(`  Failed to rename running dir: ${e.message}`);
+      // Continue with original dir
+    }
+  }
+
+  // Create tmux session
+  execSync(`tmux new-session -d -s ${sessionName} -x 200 -y 50`);
+  try {
+    execSync(`tmux set-option -t ${sessionName} -g mouse on 2>/dev/null`);
+    execSync(`tmux set-option -t ${sessionName} pane-border-status top 2>/dev/null`);
+    execSync(`tmux set-option -t ${sessionName} pane-border-format " #{pane_title} " 2>/dev/null`);
+    execSync(`tmux set-option -t ${sessionName} @agent_ceo 1 2>/dev/null`);
+  } catch { /* older tmux */ }
+
+  const pane0 = execSync(
+    `tmux list-panes -t ${sessionName} -F "#{pane_id}" | head -1`
+  ).toString().trim();
+
+  try {
+    execSync(`tmux select-pane -t ${pane0} -T "chatroom" 2>/dev/null`);
+  } catch { /* ignore */ }
+
+  // Create agent panes with native resume
+  const sessionLogDir = path.join('/tmp/agent-ceo', sessionName);
+  fs.mkdirSync(sessionLogDir, { recursive: true });
+
+  const agentPanes = {};
+  const projectDir = meta.projectDir || process.cwd();
+
+  for (const { name, provider: providerName, sessionId } of agentList) {
+    let provider;
+    try {
+      provider = require(`./providers/${providerName}`);
+    } catch {
+      printWarning(`  ${name}: provider ${providerName} not available — skipping`);
+      continue;
+    }
+
+    if (!provider.detect()) {
+      printWarning(`  ${name}: ${providerName} CLI not installed — marking unavailable`);
+      agentPanes[name] = { paneId: null, logFile: null, provider: providerName, sessionId, unavailable: true };
+      continue;
+    }
+
+    const logFile = path.join(sessionLogDir, `${name}.log`);
+    fs.writeFileSync(logFile, '');
+
+    const cdFlag = projectDir ? `-c "${projectDir}"` : '';
+    const paneId = execSync(
+      `tmux split-window -t ${sessionName} ${cdFlag} -P -F "#{pane_id}"`
+    ).toString().trim();
+
+    try {
+      execSync(`tmux select-pane -t ${paneId} -T "${name}" 2>/dev/null`);
+    } catch { /* ignore */ }
+
+    execSync(`tmux pipe-pane -t ${paneId} "cat >> ${logFile}"`);
+
+    // Use native resume args if sessionId exists, else fresh start
+    let cliArgs;
+    if (sessionId && provider.getResumeArgs) {
+      cliArgs = provider.getResumeArgs(sessionId);
+      printSystem(`  ${name}: resuming native session ${sessionId.substring(0, 8)}...`);
+    } else {
+      const newId = provider.generateSessionId ? provider.generateSessionId() : null;
+      cliArgs = provider.getStartArgs ? provider.getStartArgs(newId) : provider.startArgs;
+      if (newId) printSystem(`  ${name}: fresh session ${newId.substring(0, 8)}...`);
+      else printSystem(`  ${name}: fresh session`);
+      // Store the new ID
+      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId: newId };
+    }
+
+    const cmd = `${provider.command} ${cliArgs.join(' ')}`.trim();
+    execFileSync('tmux', ['send-keys', '-t', paneId, '-l', cmd]);
+    execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
+
+    if (!agentPanes[name]) {
+      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId };
+    }
+  }
+
+  // Arrange layout
+  try {
+    execSync(`tmux select-layout -t ${sessionName} tiled 2>/dev/null`);
+  } catch { /* ignore */ }
+
+  // Update meta
+  writeMeta(actualRunningDir, {
+    ...meta,
+    lastActive: new Date().toISOString(),
+  });
+
+  // Write setup state for chatroom (with isRecovery flag)
+  const setupState = {
+    sessionName,
+    sessionLogDir,
+    pane0,
+    agents: agentPanes,
+    isRecovery: true,
+    originalArgs: { agents: null, session: null, resume: false, native: false },
+  };
+  const setupFile = setupFileFor(sessionName);
+  fs.writeFileSync(setupFile, JSON.stringify(setupState));
+
+  // Start chatroom in pane 0
+  const scriptPath = path.resolve(__dirname, '../bin/agent-ceo');
+  const chatCmd = `node "${scriptPath}" --_chatroom "${sessionName}"`;
+  execFileSync('tmux', ['send-keys', '-t', pane0, '-l', chatCmd]);
+  execFileSync('tmux', ['send-keys', '-t', pane0, 'Enter']);
+
+  try {
+    execSync(`tmux select-pane -t ${pane0} 2>/dev/null`);
+  } catch { /* ignore */ }
+
+  console.log('\n  Recovery complete. Attaching...\n');
+  attachToSession(sessionName);
+}
+
+// ═══════════════════════════════════════════════════════════
 // Create new session (prompts + launch)
 // ═══════════════════════════════════════════════════════════
 
@@ -1093,7 +1272,7 @@ async function main() {
       args.session = selected.data.name;
       await createNewSession(args);
     } else if (selected.type === 'recover_tmux_lost') {
-      console.log('  VPS reboot recovery not yet implemented (Phase 3).');
+      await recoverFromReboot(selected.data);
     }
     return;
   }
