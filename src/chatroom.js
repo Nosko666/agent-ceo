@@ -20,6 +20,7 @@ class Chatroom {
     this.tokenTracker = extras.tokenTracker || null;
     this.privacy = extras.privacy || null;
     this.journal = extras.journal || null;
+    this.runningDir = extras.runningDir || null;
     this.rl = null;
     this.running = false;
     this._shuttingDown = false;
@@ -661,6 +662,10 @@ class Chatroom {
     try {
       const dir = this.session.save(this.agentManager, this.inboxManager, this.privacy);
       console.log(`\n${C.dim}Session saved to: ${dir}${C.reset}`);
+      // Clean up running dir — session was saved successfully
+      if (this.runningDir) {
+        try { require('fs').rmSync(this.runningDir, { recursive: true }); } catch { /* ignore */ }
+      }
     } catch (e) {
       console.error('Failed to save session:', e.message);
     }

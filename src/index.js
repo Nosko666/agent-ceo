@@ -574,6 +574,7 @@ async function runChatroom(sessionId) {
     tagManager,
     privacy,
     journal,
+    runningDir,
   });
 
   const workflows = new WorkflowManager(
