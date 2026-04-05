@@ -153,7 +153,7 @@ class Chatroom {
     }
 
     // @ mentions
-    const atMatch = input.match(/^@(\S+?)(?::(\w+))?\s*(.*)/s);
+    const atMatch = input.match(/^@([^\s:]+)(?::(\w+))?\s*(.*)/s);
     if (atMatch) {
       const [, target, modifier, message] = atMatch;
       await this.handleMention(target, modifier, message || '');

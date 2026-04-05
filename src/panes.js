@@ -146,6 +146,10 @@ class PaneManager {
       }
       execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Enter']);
     }
+    // Submit: Escape clears any multi-line editing mode, Enter submits.
+    // Claude Code needs this because Enter alone adds newlines in its editor.
+    execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Escape']);
+    execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Enter']);
     return true;
   }
 
