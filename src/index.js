@@ -282,6 +282,11 @@ function launchInTmux(args) {
     execSync(`tmux set-option -t ${sessionName} pane-border-format " #{pane_title} " 2>/dev/null`);
   } catch { /* older tmux */ }
 
+  // Tag session for discovery by startup menu
+  try {
+    execSync(`tmux set-option -t ${sessionName} @agent_ceo 1 2>/dev/null`);
+  } catch { /* older tmux may not support user options */ }
+
   // Get pane 0 ID
   const pane0 = execSync(
     `tmux list-panes -t ${sessionName} -F "#{pane_id}" | head -1`
@@ -335,6 +340,18 @@ function launchInTmux(args) {
   // ── Create persistent running directory for journal ──
   const runningDir = path.join(require('os').homedir(), '.agent-ceo', 'running', sessionName);
   fs.mkdirSync(runningDir, { recursive: true });
+
+  // Write initial session metadata
+  const { writeMeta } = require('./menu');
+  writeMeta(runningDir, {
+    label: sessionName,
+    team: Object.fromEntries(agentList.map(a => [a.name, a.provider])),
+    projectDir: process.cwd(),
+    createdAt: new Date().toISOString(),
+    lastActive: new Date().toISOString(),
+    schemaVersion: 1,
+    appVersion: '2.0.0',
+  });
 
   // ── Save setup state for the chatroom process ────────
   const setupState = {
