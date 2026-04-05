@@ -47,6 +47,7 @@ function parseArgs(argv) {
     attach: null,           // tmux session name to attach to
     name: null,             // session label
     cd: null,               // project directory override
+    native: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -72,6 +73,8 @@ function parseArgs(argv) {
       args.name = argv[++i];
     } else if (arg === '--cd') {
       args.cd = argv[++i];
+    } else if (arg === '--native') {
+      args.native = true;
     }
   }
   return args;
@@ -411,6 +414,7 @@ function launchInTmux(args) {
         agents: args.agents,
         session: args.session,
         resume: args.resume,
+        native: args.native,
       },
     };
     const setupFile = setupFileFor(sessionName);
@@ -581,6 +585,24 @@ async function runChatroom(sessionId) {
         inboxManager.pushTo(name, 'system',
           `[Previous session summary]\n${summary}\n[End of summary — new session started]`);
       }
+    }
+  }
+
+  // If --native flag, attempt native session resume using stored IDs
+  if (setup.originalArgs.native) {
+    const nativeIds = SessionManager.loadNativeIds(resumeSession);
+    if (nativeIds) {
+      const { printSystem } = require('./display');
+      for (const [name, info] of Object.entries(nativeIds)) {
+        const agent = agentManager.agents.get(name);
+        if (agent) {
+          agent.sessionId = info.sessionId;
+          printSystem(`  ${name}: native session ${info.sessionId.substring(0, 8)}...`);
+        }
+      }
+    } else {
+      const { printWarning } = require('./display');
+      printWarning('No native.json found — starting fresh sessions.');
     }
   }
 

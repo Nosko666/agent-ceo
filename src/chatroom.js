@@ -547,7 +547,7 @@ class Chatroom {
         printSystem('Layout reset');
         break;
 
-      case 'save':      cmd.cmdSave(ctx); break;
+      case 'save':      cmd.cmdSave(ctx, args); break;
 
       case 'session':
         if (args[0] === 'name' && args[1]) {

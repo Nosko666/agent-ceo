@@ -256,9 +256,14 @@ function cmdFocus(ctx, args) {
 
 // ── Session ───────────────────────────────────────────────
 
-function cmdSave(ctx) {
+function cmdSave(ctx, args) {
   const dir = ctx.session.save(ctx.agentManager, ctx.inboxManager, ctx.privacy);
   printSystem(`Session saved to: ${dir}`);
+
+  if (args && args.includes('--native')) {
+    ctx.session.saveNativeIds(dir, ctx.agentManager);
+    printSystem('Native session IDs saved (native.json)');
+  }
 }
 
 function cmdHistory(ctx) {
@@ -562,7 +567,7 @@ ${C.bold}Tags:${C.reset}
   /tag dismiss [n]           Dismiss suggestion
 
 ${C.bold}Session:${C.reset}
-  /session name <n>  /save  /history  /tokens
+  /session name <n>  /save [--native]  /history  /tokens
   /summarize <agent>  /clear <agent>  /full <agent>
 
 ${C.bold}Layout:${C.reset}  /focus [agent]   /layout   /detach

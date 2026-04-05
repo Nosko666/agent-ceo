@@ -171,6 +171,28 @@ class SessionManager {
     return JSON.parse(fs.readFileSync(statePath, 'utf-8'));
   }
 
+  saveNativeIds(dir, agentManager) {
+    const native = {};
+    for (const [name, agent] of agentManager.agents) {
+      if (agent.sessionId) {
+        native[name] = {
+          provider: agent.provider,
+          sessionId: agent.sessionId,
+        };
+      }
+    }
+    if (Object.keys(native).length > 0) {
+      fs.writeFileSync(path.join(dir, 'native.json'), JSON.stringify(native, null, 2));
+    }
+  }
+
+  static loadNativeIds(sessionName) {
+    const nativePath = path.join(SESSIONS_DIR, sessionName, 'native.json');
+    if (!fs.existsSync(nativePath)) return null;
+    try { return JSON.parse(fs.readFileSync(nativePath, 'utf-8')); }
+    catch { return null; }
+  }
+
   static loadSummary(sessionName) {
     const summaryPath = path.join(SESSIONS_DIR, sessionName, 'summary.md');
     if (!fs.existsSync(summaryPath)) return null;
