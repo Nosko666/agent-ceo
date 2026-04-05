@@ -358,13 +358,13 @@ class Chatroom {
         const seq = this.journal.append(journalEvent);
 
         // Journal the routing based on broadcast mode
-        const routedTo = this._broadcastResponse(agentName, result.text, displayName, privateMode, broadcastTo);
+        const routedTo = this._broadcastResponse(agentName, result.text, displayName, privateMode, broadcastTo, displayMode);
         if (routedTo && routedTo.length > 0) {
           this.journal.append({ type: 'inbox_route', msgSeq: seq, to: routedTo });
         }
       } else {
         // No journal — still need to broadcast
-        this._broadcastResponse(agentName, result.text, displayName, privateMode, broadcastTo);
+        this._broadcastResponse(agentName, result.text, displayName, privateMode, broadcastTo, displayMode);
       }
 
       // Show token status after response (only for full display)
@@ -388,12 +388,14 @@ class Chatroom {
    * Internal: broadcast an agent's response to other inboxes.
    * Returns the list of recipient agent names (for journal routing).
    */
-  _broadcastResponse(agentName, text, displayName, privateMode, broadcastTo) {
+  _broadcastResponse(agentName, text, displayName, privateMode, broadcastTo, display = 'full') {
     // Private mode: only broadcast if agent is transparent
     if (privateMode) {
       if (this.privacy && this.privacy.isTransparent(agentName)) {
         this.inboxManager.pushToAll(agentName, text, agentName);
-        printDim(`  (${displayName} is transparent — response broadcast to all)`);
+        if (display !== 'hidden') {
+          printDim(`  (${displayName} is transparent — response broadcast to all)`);
+        }
         return [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
       }
       return [];
@@ -411,7 +413,7 @@ class Chatroom {
 
     // Default: 'all'
     this.inboxManager.pushToAll(agentName, text, agentName);
-    if (this.privacy && this.privacy.isTransparent(agentName)) {
+    if (display !== 'hidden' && this.privacy && this.privacy.isTransparent(agentName)) {
       printDim(`  (${displayName} is transparent — all agents can see its pane)`);
     }
     return [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
@@ -550,7 +552,7 @@ class Chatroom {
 
       case 'quit':
       case 'exit':
-        await this.confirmAndShutdown();
+        this.confirmAndShutdown();
         break;
 
       default:
@@ -638,15 +640,16 @@ class Chatroom {
 
   // ── Quit confirmation ──────────────────────────────────
 
-  async confirmAndShutdown() {
-    const { prompt } = require('./menu');
-
-    const answer = await prompt('  Are you sure? This ends all agents. (y/N): ');
-    if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
-      this.shutdown();
-    } else {
-      printSystem('Quit cancelled.');
-    }
+  confirmAndShutdown() {
+    // Use the existing readline to avoid conflicts
+    this.rl.question('  Are you sure? This ends all agents. (y/N): ', (answer) => {
+      if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+        this.shutdown();
+      } else {
+        printSystem('Quit cancelled.');
+        this.rl.prompt();
+      }
+    });
   }
 
   // ── Shutdown ───────────────────────────────────────────
