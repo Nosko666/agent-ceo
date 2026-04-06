@@ -92,6 +92,24 @@ function parseAgentSpec(spec) {
   return result;
 }
 
+// ── Utility: recursive copy (for Codex session restore) ──
+
+function _copyDirRecursive(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  try {
+    const entries = fs.readdirSync(src, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(src, entry.name);
+      const dstPath = path.join(dst, entry.name);
+      if (entry.isDirectory()) {
+        _copyDirRecursive(srcPath, dstPath);
+      } else if (!entry.isSymbolicLink()) {
+        fs.copyFileSync(srcPath, dstPath);
+      }
+    }
+  } catch { /* ignore */ }
+}
+
 // ── Dependency checks ────────────────────────────────────
 
 function checkDependencies() {
@@ -416,6 +434,14 @@ function launchInTmux(args) {
           if (fs.existsSync(authSrc) && !fs.existsSync(authDst)) fs.symlinkSync(authSrc, authDst);
           if (fs.existsSync(configSrc) && !fs.existsSync(configDst)) fs.symlinkSync(configSrc, configDst);
         } catch { /* ignore symlink errors */ }
+        // If --native resume, restore saved Codex sessions into this fresh CODEX_HOME
+        if (nativeIds && nativeIds[name] && nativeIds[name].codexHome && args.session) {
+          const savedCodexDir = path.join(require('os').homedir(), '.agent-ceo', 'sessions', args.session, 'codex', name);
+          if (fs.existsSync(savedCodexDir)) {
+            _copyDirRecursive(savedCodexDir, codexHome);
+            console.log(`  ${name}: restored Codex sessions from saved archive`);
+          }
+        }
         cmdPrefix = `CODEX_HOME="${codexHome}" `;
       }
 
@@ -828,11 +854,14 @@ function recoverChatroom(sessionInfo) {
   }
 
   // Build setup state for the chatroom process
+  const { readMeta } = require('./menu');
+  const recoveryMeta = readMeta(path.join(require('os').homedir(), '.agent-ceo', 'running', sessionName));
   const setupState = {
     sessionName,
     pane0,
     agents,
     sessionLogDir,
+    projectDir: (recoveryMeta && recoveryMeta.projectDir) || process.cwd(),
     isRecovery: true,
     originalArgs: { agents: null, session: null, resume: false },
   };
@@ -987,15 +1016,31 @@ async function recoverFromReboot(sessionInfo) {
       if (newId) printSystem(`  ${name}: fresh session ${newId.substring(0, 8)}...`);
       else printSystem(`  ${name}: fresh session`);
       // Store the new ID
-      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId: newId };
+      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId: newId, codexHome };
     }
 
-    const cmd = `${provider.command} ${cliArgs.join(' ')}`.trim();
+    // Per-agent CODEX_HOME for Codex agents in recovery
+    let codexHome = null;
+    let cmdPrefix = '';
+    if (providerName === 'codex') {
+      codexHome = path.join(actualRunningDir, name);
+      fs.mkdirSync(codexHome, { recursive: true });
+      const realCodexHome = path.join(require('os').homedir(), '.codex');
+      try {
+        const authSrc = path.join(realCodexHome, 'auth.json');
+        const configSrc = path.join(realCodexHome, 'config.toml');
+        if (fs.existsSync(authSrc) && !fs.existsSync(path.join(codexHome, 'auth.json'))) fs.symlinkSync(authSrc, path.join(codexHome, 'auth.json'));
+        if (fs.existsSync(configSrc) && !fs.existsSync(path.join(codexHome, 'config.toml'))) fs.symlinkSync(configSrc, path.join(codexHome, 'config.toml'));
+      } catch { /* ignore */ }
+      cmdPrefix = `CODEX_HOME="${codexHome}" `;
+    }
+
+    const cmd = `${cmdPrefix}${provider.command} ${cliArgs.join(' ')}`.trim();
     execFileSync('tmux', ['send-keys', '-t', paneId, '-l', cmd]);
     execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
 
     if (!agentPanes[name]) {
-      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId };
+      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId, codexHome };
     }
   }
 
@@ -1016,6 +1061,7 @@ async function recoverFromReboot(sessionInfo) {
     sessionLogDir,
     pane0,
     agents: agentPanes,
+    projectDir: meta.projectDir || process.cwd(),
     isRecovery: true,
     originalArgs: { agents: null, session: null, resume: false, native: false },
   };

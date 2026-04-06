@@ -18,7 +18,11 @@ const os = require('os');
 
 let tmuxOk = false;
 let claudeOk = false;
-try { execSync('which tmux', { stdio: 'ignore' }); tmuxOk = true; } catch {}
+try {
+  execSync('which tmux', { stdio: 'ignore' });
+  execSync('tmux list-sessions 2>/dev/null || tmux new-session -d -s __smoke_test 2>/dev/null && tmux kill-session -t __smoke_test 2>/dev/null', { stdio: 'ignore' });
+  tmuxOk = true;
+} catch {}
 try { execSync('which claude', { stdio: 'ignore' }); claudeOk = true; } catch {}
 
 const canRun = tmuxOk && claudeOk;

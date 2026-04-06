@@ -96,10 +96,7 @@ class SessionManager {
     if (agentsSerialized.agents) {
       for (const [name, agent] of Object.entries(agentsSerialized.agents)) {
         delete agent.sessionId;
-        // Also clean up internal Codex state
-        delete agent._codexMarker;
-        delete agent._codexMarkerSent;
-        delete agent._codexDiscovery;
+        delete agent._codexHome;
       }
     }
 

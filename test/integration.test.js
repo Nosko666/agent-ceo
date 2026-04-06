@@ -5,12 +5,14 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Skip all integration tests if tmux is not available
+// Skip integration tests if tmux is not available OR not usable (restricted env)
 let tmuxAvailable = false;
 try {
   execSync('which tmux', { stdio: 'ignore' });
+  // Also check tmux is actually usable (not just present)
+  execSync('tmux list-sessions 2>/dev/null || tmux new-session -d -s __tmux_test 2>/dev/null && tmux kill-session -t __tmux_test 2>/dev/null', { stdio: 'ignore' });
   tmuxAvailable = true;
-} catch { /* no tmux */ }
+} catch { /* tmux missing or unusable */ }
 
 const TEST_SESSION = 'agent-ceo-test';
 

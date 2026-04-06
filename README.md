@@ -445,7 +445,7 @@ tmux session "ceo"
 | Agent communication | tmux `load-buffer` + `paste-buffer -p -r` (bracketed paste, preserves newlines) |
 | Output capture | `tmux pipe-pane` → log files → byte-offset tracking → silence detection |
 | State durability | Write-ahead NDJSON journal + atomic snapshots. Survives process crashes. |
-| Session IDs | Claude: deterministic UUID at spawn (`--session-id`). Codex: lazy marker discovery. |
+| Session IDs | Claude: deterministic UUID at spawn (`--session-id`). Codex: per-agent CODEX_HOME + rollout JSONL capture. |
 | Config | `~/.agent-ceo/config.json` (user prefs) + `defaults.json` (per-project team defaults) |
 | File layout | Capture logs in `/tmp/agent-ceo/<session>/`. Journal/meta in `~/.agent-ceo/running/<session>/`. Saved sessions in `~/.agent-ceo/sessions/<name>/`. |
 
@@ -463,7 +463,7 @@ tmux session "ceo"
 | `src/workflows.js` | ~230 | Built-in prompt templates (/debate, /plan, /review, /research) |
 | `src/menu.js` | ~220 | Session discovery, meta.json, project dir detection |
 | `src/journal.js` | ~170 | Write-ahead NDJSON journal + atomic snapshots |
-| `src/native/codexDiscovery.js` | ~190 | Codex session ID discovery (marker scanning) |
+| `src/native/codexDiscovery.js` | ~190 | Codex session ID discovery (legacy fallback) |
 | `src/capture.js` | ~150 | Response completion detection (silence + prompt pattern) |
 | `src/inbox.js` | ~150 | Per-agent message buffers with ring buffer overflow |
 | `src/privacy.js` | ~140 | DM logs, transparent/private modes |
@@ -483,7 +483,7 @@ tmux session "ceo"
 
 ## Requirements
 
-- **Node.js** 20+ (for `crypto.randomUUID()` and `node:test`)
+- **Node.js** 18+
 - **tmux** 3.0+ (auto-installed by setup.sh)
 - At least one AI CLI installed and authenticated:
   - [Claude Code](https://claude.ai/product/claude-code) (`claude` command)
@@ -497,7 +497,7 @@ tmux session "ceo"
 - Full chatroom with @mentions, groups, DMs
 - Autonomous pipeline (/auto) with plan/debate/consensus/implement/review
 - Write-ahead journal with crash recovery
-- Provider native session resume (Claude UUID, Codex marker discovery)
+- Provider native session resume (Claude UUID, Codex per-agent CODEX_HOME)
 - Interactive startup menu with session management
 - Config system with per-project defaults
 
