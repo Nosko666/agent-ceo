@@ -362,14 +362,8 @@ class Chatroom {
       }
     }
 
-    // Generate unique response markers for clean extraction
-    const crypto = require('crypto');
-    const markerId = crypto.randomUUID().substring(0, 8);
-    const beginMarker = `AGENT_CEO_RESPONSE_BEGIN_${markerId}`;
-    const endMarker = `AGENT_CEO_RESPONSE_END_${markerId}`;
-
-    // Append marker instructions to the prompt
-    fullPrompt += `\n\nIMPORTANT: Start your response with exactly this line: ${beginMarker}\nEnd your response with exactly this line: ${endMarker}\nBetween these markers, output only plain text — no headers, status lines, or UI elements.`;
+    // Save the prompt text so we can strip it from captured output later
+    const sentPromptText = fullPrompt;
 
     // Track tokens sent
     if (this.tokenTracker) this.tokenTracker.trackSent(agentName, fullPrompt);
@@ -387,29 +381,42 @@ class Chatroom {
     // Wait for response
     const result = await this.capture.waitForResponse(agentName);
 
-    // Extract clean response between markers (if present)
+    // Clean the response: strip the input echo (we know what we sent)
+    // and provider-specific UI chrome
     if (result && result.text) {
-      const beginIdx = result.text.lastIndexOf(beginMarker);
-      if (beginIdx >= 0) {
-        const afterBegin = beginIdx + beginMarker.length;
-        const endIdx = result.text.indexOf(endMarker, afterBegin);
-        if (endIdx >= 0) {
-          result.text = result.text.substring(afterBegin, endIdx).trim();
-        } else {
-          // END marker not found — take everything after last BEGIN
-          result.text = result.text.substring(afterBegin).trim();
-        }
-      }
-      // If no BEGIN marker found at all, fall through to existing _cleanResponse behavior
+      let cleaned = result.text;
 
-      // Remove any remaining marker lines
-      if (result.text) {
-        result.text = result.text
-          .split('\n')
-          .filter(line => !line.includes('AGENT_CEO_RESPONSE_BEGIN_') && !line.includes('AGENT_CEO_RESPONSE_END_'))
-          .join('\n')
-          .trim();
+      // Strip input echo: remove lines that match words from our sent prompt
+      // The prompt appears in the log because pipe-pane captures everything
+      const promptWords = sentPromptText.split(/\s+/).filter(w => w.length > 3);
+      const lines = cleaned.split('\n');
+      const cleanedLines = [];
+      let foundResponse = false;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) { if (foundResponse) cleanedLines.push(line); continue; }
+
+        // Skip lines that are clearly input echo (contain prompt fragments)
+        const isEcho = !foundResponse && promptWords.length > 0 &&
+          promptWords.filter(w => trimmed.toLowerCase().includes(w.toLowerCase())).length >= 2;
+
+        // Skip known system instruction lines
+        const isSystem = trimmed.includes('SYSTEM: READ-ONLY') ||
+          trimmed.includes('SYSTEM: You have WRITE') ||
+          trimmed.includes('AGENT_CEO_') ||
+          trimmed.includes('ctrl+g to edit') ||
+          trimmed.includes('esc to interrupt') ||
+          trimmed.includes('Pasting text');
+
+        if (isEcho || isSystem) continue;
+
+        // Once we find a non-echo, non-system line, everything after is the response
+        if (!foundResponse && trimmed.length > 0) foundResponse = true;
+        if (foundResponse) cleanedLines.push(line);
       }
+
+      result.text = cleanedLines.join('\n').trim();
     }
 
     // Process result
