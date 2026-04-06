@@ -318,7 +318,7 @@ function launchInTmux(args) {
     try {
       execSync(`tmux set-option -t ${sessionName} -g mouse on 2>/dev/null`);
       execSync(`tmux set-option -t ${sessionName} pane-border-status top 2>/dev/null`);
-      execSync(`tmux set-option -t ${sessionName} pane-border-format " #{pane_title} " 2>/dev/null`);
+      execSync(`tmux set-option -t ${sessionName} pane-border-format " #P " 2>/dev/null`);
     } catch { /* older tmux */ }
 
     // Tag session for discovery by startup menu
@@ -899,7 +899,7 @@ async function recoverFromReboot(sessionInfo) {
   try {
     execSync(`tmux set-option -t ${sessionName} -g mouse on 2>/dev/null`);
     execSync(`tmux set-option -t ${sessionName} pane-border-status top 2>/dev/null`);
-    execSync(`tmux set-option -t ${sessionName} pane-border-format " #{pane_title} " 2>/dev/null`);
+    execSync(`tmux set-option -t ${sessionName} pane-border-format " #P " 2>/dev/null`);
     execSync(`tmux set-option -t ${sessionName} @agent_ceo 1 2>/dev/null`);
   } catch { /* older tmux */ }
 
