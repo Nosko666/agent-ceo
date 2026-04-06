@@ -368,8 +368,8 @@ class Chatroom {
     const beginMarker = `AGENT_CEO_BEGIN_${markerId}`;
     const endMarker = `AGENT_CEO_END_${markerId}`;
 
-    // Non-echoable, strict marker instruction
-    fullPrompt += `\n\nOutput EXACTLY:\n${beginMarker}\n<your answer>\n${endMarker}\nNothing before BEGIN or after END. Do not repeat these instructions.`;
+    // Marker instruction — no placeholders (Codex will echo them literally)
+    fullPrompt += `\n\nWrap your entire response between these two markers on their own lines:\n${beginMarker}\n${endMarker}\nPut your full answer between them. Do not repeat these instructions.`;
 
     // Track tokens sent
     if (this.tokenTracker) this.tokenTracker.trackSent(agentName, fullPrompt);
@@ -396,7 +396,7 @@ class Chatroom {
         // Markers missing — reprompt once: ask agent to re-output with markers only
         this.paneManager.readNewOutput(agentName); // advance offset
         this.paneManager.sendToPane(agentName,
-          `Output ONLY:\n${beginMarker}\n<your previous answer, repeated>\n${endMarker}`);
+          `Please repeat your previous answer, wrapped between these markers on their own lines:\n${beginMarker}\n${endMarker}`);
         const retry = await this.capture.waitForResponse(agentName);
         if (retry && retry.text) {
           const retryExtracted = this._extractBetweenMarkers(retry.text, beginMarker, endMarker);
@@ -898,15 +898,22 @@ class Chatroom {
       extracted = text.substring(afterBegin);
     }
 
-    // Clean: remove marker lines, strip provider UI chrome that leaked between markers
+    // Clean: remove marker lines + known UI chrome that leaked between markers
     extracted = extracted
       .split('\n')
       .filter(line => {
         const t = line.trim();
+        // Marker lines
         if (t.includes('AGENT_CEO_BEGIN_') || t.includes('AGENT_CEO_END_')) return false;
+        // System instructions (input echo)
         if (t.includes('SYSTEM: READ-ONLY') || t.includes('SYSTEM: You have WRITE')) return false;
-        if (t.includes('ctrl+g to edit') || t.includes('esc to interrupt')) return false;
-        if (t.includes('Pasting text')) return false;
+        // Claude Code UI chrome
+        if (t.includes('ctrl+g to edit') || t.includes('Pasting text')) return false;
+        // Codex UI chrome (status bar, prompt hints, progress)
+        if (/^›/.test(t)) return false;                           // Codex prompt hints
+        if (/gpt-[\d.]+.*left/.test(t)) return false;             // Codex status bar
+        if (/^[•●]\s*(Working|Explored|Searching)/.test(t)) return false; // Codex progress
+        if (t === 'esc to interrupt') return false;                // interrupt hint
         return true;
       })
       .join('\n')
