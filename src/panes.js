@@ -86,7 +86,7 @@ class PaneManager {
     }
   }
 
-  createAgentPane(agentName, provider, direction = 'right', percent = 25, cliArgs = null) {
+  createAgentPane(agentName, provider, direction = 'right', percent = 25, cliArgs = null, envPrefix = '') {
     const logFile = path.join(this.logDir, `${agentName}.log`);
 
     // Clear old log
@@ -110,7 +110,7 @@ class PaneManager {
 
     // Start the agent CLI via literal send-keys (shell is ready for input)
     const args = cliArgs || provider.startArgs || [];
-    const cmd = `${provider.command} ${args.join(' ')}`.trim();
+    const cmd = `${envPrefix}${provider.command} ${args.join(' ')}`.trim();
     execFileSync('tmux', ['send-keys', '-t', paneId, '-l', cmd]);
     execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
 
@@ -120,6 +120,7 @@ class PaneManager {
       provider,
       byteOffset: 0,
       status: 'starting',
+      envPrefix: envPrefix || '',
     });
 
     return { paneId, logFile };
@@ -242,9 +243,10 @@ class PaneManager {
       execFileSync('tmux', ['respawn-pane', '-t', pane.paneId]);
       // Re-enable logging on the fresh file
       execSync(`tmux pipe-pane -t ${pane.paneId} "cat >> ${pane.logFile}"`);
-      // Use provided CLI args or default from provider
+      // Use provided CLI args or default from provider, with env prefix
       const args = cliArgs || (pane.provider.startArgs ? pane.provider.startArgs : []);
-      const cmd = `${pane.provider.command} ${args.join(' ')}`.trim();
+      const prefix = pane.envPrefix || '';
+      const cmd = `${prefix}${pane.provider.command} ${args.join(' ')}`.trim();
       execFileSync('tmux', ['send-keys', '-t', pane.paneId, '-l', cmd]);
       execFileSync('tmux', ['send-keys', '-t', pane.paneId, 'Enter']);
       pane.status = 'starting';
@@ -291,6 +293,7 @@ class PaneManager {
         provider,
         byteOffset: 0,
         status: 'starting',
+        envPrefix: info.codexHome ? `CODEX_HOME="${info.codexHome}" ` : '',
       });
     }
   }

@@ -44,7 +44,7 @@ class Chatroom {
       this.journal = null;
     }
     this.autoRunner = null;
-    this._codexPendingMarkers = new Map(); // marker → { agentName, discovery }
+    // (marker discovery removed — JSONL capture handles Codex response extraction)
     this.healthCheckInterval = null;
     this.autoSaveInterval = null;
     this.tokenWarningInterval = null;
@@ -513,29 +513,7 @@ class Chatroom {
     return [...this.inboxManager.inboxes.keys()].filter(n => n !== agentName);
   }
 
-  _startCodexDiscoveryIfNeeded(agentName, agent) {
-    const CodexDiscovery = require('./native/codexDiscovery');
-    // Register marker with session-level pending map
-    this._codexPendingMarkers.set(agent._codexMarker, agentName);
-
-    // Start one discovery per agent (full single-scanner optimization is Phase 3.5)
-    const discovery = CodexDiscovery.startDiscovery({
-      marker: agent._codexMarker,
-      agentName,
-      sessionsDir: null, // uses env var or default
-      agentStartTime: new Date(agent.spawnedAt).getTime(),
-      projectDir: process.cwd(),
-      onFound: (sessionId) => {
-        agent.sessionId = sessionId;
-        if (this.journal) {
-          this.journal.append({ type: 'agent_session', agent: agentName, sessionId });
-        }
-        this._metaDirty = true;
-        this._codexPendingMarkers.delete(agent._codexMarker);
-      },
-    });
-    agent._codexDiscovery = discovery;
-  }
+  // _startCodexDiscoveryIfNeeded removed — JSONL capture + per-agent CODEX_HOME replaces marker discovery
 
   handleStop(target) {
     const agents = [];
@@ -871,48 +849,6 @@ class Chatroom {
     printSystem(`Participants: ${participants.join(', ')}${roles.solo ? ' (solo mode)' : ''}`);
 
     await this.autoRunner.run(this);
-  }
-
-  // ── Response extraction ──────────────────────────────────
-
-  _extractBetweenMarkers(text, beginMarker, endMarker) {
-    // Use LAST BEGIN (first is input echo) → next END after it
-    const beginIdx = text.lastIndexOf(beginMarker);
-    if (beginIdx < 0) return null;
-
-    const afterBegin = beginIdx + beginMarker.length;
-    const endIdx = text.indexOf(endMarker, afterBegin);
-
-    let extracted;
-    if (endIdx >= 0) {
-      extracted = text.substring(afterBegin, endIdx);
-    } else {
-      // No END marker — take everything after last BEGIN
-      extracted = text.substring(afterBegin);
-    }
-
-    // Clean: remove marker lines + known UI chrome that leaked between markers
-    extracted = extracted
-      .split('\n')
-      .filter(line => {
-        const t = line.trim();
-        // Marker lines
-        if (t.includes('AGENT_CEO_BEGIN_') || t.includes('AGENT_CEO_END_')) return false;
-        // System instructions (input echo)
-        if (t.includes('SYSTEM: READ-ONLY') || t.includes('SYSTEM: You have WRITE')) return false;
-        // Claude Code UI chrome
-        if (t.includes('ctrl+g to edit') || t.includes('Pasting text')) return false;
-        // Codex UI chrome (status bar, prompt hints, progress)
-        if (/^›/.test(t)) return false;                           // Codex prompt hints
-        if (/gpt-[\d.]+.*left/.test(t)) return false;             // Codex status bar
-        if (/^[•●]\s*(Working|Explored|Searching)/.test(t)) return false; // Codex progress
-        if (t === 'esc to interrupt') return false;                // interrupt hint
-        return true;
-      })
-      .join('\n')
-      .trim();
-
-    return extracted.length > 0 ? extracted : null;
   }
 
   // ── Journal snapshot ───────────────────────────────────

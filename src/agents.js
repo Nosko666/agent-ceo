@@ -53,8 +53,35 @@ class AgentManager {
     // Build CLI args with session ID
     const cliArgs = provider.getStartArgs ? provider.getStartArgs(sessionId) : provider.startArgs;
 
+    // Per-agent CODEX_HOME for Codex agents (enables JSONL capture)
+    let codexHome = null;
+    let envPrefix = '';
+    if (providerName === 'codex') {
+      const os = require('os');
+      const path = require('path');
+      // Find the running dir from paneManager's session or use a temp location
+      const runningBase = path.join(os.homedir(), '.agent-ceo', 'running');
+      const sessionDir = this.paneManager.sessionName || 'default';
+      codexHome = path.join(runningBase, sessionDir, agentName);
+      const fs = require('fs');
+      fs.mkdirSync(codexHome, { recursive: true });
+      // Symlink auth + config
+      const realCodexHome = path.join(os.homedir(), '.codex');
+      try {
+        const authSrc = path.join(realCodexHome, 'auth.json');
+        const configSrc = path.join(realCodexHome, 'config.toml');
+        if (fs.existsSync(authSrc) && !fs.existsSync(path.join(codexHome, 'auth.json'))) {
+          fs.symlinkSync(authSrc, path.join(codexHome, 'auth.json'));
+        }
+        if (fs.existsSync(configSrc) && !fs.existsSync(path.join(codexHome, 'config.toml'))) {
+          fs.symlinkSync(configSrc, path.join(codexHome, 'config.toml'));
+        }
+      } catch { /* ignore */ }
+      envPrefix = `CODEX_HOME="${codexHome}" `;
+    }
+
     // Create pane
-    const { paneId, logFile } = this.paneManager.createAgentPane(agentName, provider, 'right', 25, cliArgs);
+    const { paneId, logFile } = this.paneManager.createAgentPane(agentName, provider, 'right', 25, cliArgs, envPrefix);
 
     // Register inbox
     this.inboxManager.register(agentName);
@@ -67,6 +94,7 @@ class AgentManager {
       status: 'starting',
       spawnedAt: new Date().toISOString(),
       sessionId,
+      _codexHome: codexHome,
     });
 
     // Mark as ready after startup delay

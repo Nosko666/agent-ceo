@@ -452,6 +452,7 @@ function launchInTmux(args) {
       sessionLogDir,
       pane0,
       agents: agentPanes,
+      projectDir: args.projectDir || process.cwd(),
       originalArgs: {
         agents: args.agents,
         session: args.session,
@@ -502,6 +503,12 @@ async function runChatroom(sessionId) {
 
   // Clean up setup file
   try { fs.unlinkSync(setupFile); } catch { /* ignore */ }
+
+  // Change to project directory so all paths (Claude JSONL, /pin, etc.) are correct
+  if (setup.projectDir) {
+    try { process.chdir(setup.projectDir); }
+    catch { console.warn(`  Warning: could not chdir to ${setup.projectDir}`); }
+  }
 
   // Acquire lock keyed by session name (allows multiple sessions)
   if (!acquireLock(setup.sessionName)) {

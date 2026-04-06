@@ -214,12 +214,40 @@ class SessionManager {
         native[name] = {
           provider: agent.provider,
           sessionId: agent.sessionId,
+          codexHome: agent._codexHome || null,
         };
       }
     }
     if (Object.keys(native).length > 0) {
       fs.writeFileSync(path.join(dir, 'native.json'), JSON.stringify(native, null, 2));
     }
+
+    // Copy Codex CODEX_HOME contents (sessions + sqlite) for resume
+    for (const [name, agent] of agentManager.agents) {
+      if (agent._codexHome && fs.existsSync(agent._codexHome)) {
+        const codexSaveDir = path.join(dir, 'codex', name);
+        this._copyDirExcept(agent._codexHome, codexSaveDir, ['auth.json', 'config.toml']);
+      }
+    }
+  }
+
+  _copyDirExcept(src, dst, excludeNames) {
+    fs.mkdirSync(dst, { recursive: true });
+    try {
+      const entries = fs.readdirSync(src, { withFileTypes: true });
+      for (const entry of entries) {
+        if (excludeNames.includes(entry.name)) continue;
+        const srcPath = path.join(src, entry.name);
+        const dstPath = path.join(dst, entry.name);
+        if (entry.isDirectory()) {
+          this._copyDirExcept(srcPath, dstPath, excludeNames);
+        } else if (entry.isSymbolicLink()) {
+          // Skip symlinks (auth.json, config.toml)
+        } else {
+          fs.copyFileSync(srcPath, dstPath);
+        }
+      }
+    } catch { /* ignore copy errors */ }
   }
 
   static loadNativeIds(sessionName) {
