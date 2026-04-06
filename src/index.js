@@ -356,6 +356,10 @@ function launchInTmux(args) {
       nativeIds = SessionManager.loadNativeIds(args.session);
     }
 
+    // Create persistent running directory BEFORE agent spawn (needed for per-agent CODEX_HOME)
+    const runningDir = path.join(require('os').homedir(), '.agent-ceo', 'running', sessionName);
+    fs.mkdirSync(runningDir, { recursive: true });
+
     const agentPanes = {};
 
     for (const { name, provider: providerName } of agentList) {
@@ -428,9 +432,7 @@ function launchInTmux(args) {
       execSync(`tmux select-layout -t ${sessionName} tiled 2>/dev/null`);
     } catch { /* ignore */ }
 
-    // ── Create persistent running directory for journal ──
-    const runningDir = path.join(require('os').homedir(), '.agent-ceo', 'running', sessionName);
-    fs.mkdirSync(runningDir, { recursive: true });
+    // ── Write metadata + journal setup ──
 
     // Write initial session metadata
     const { writeMeta } = require('./menu');
