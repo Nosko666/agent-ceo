@@ -10,7 +10,7 @@ let tmuxAvailable = false;
 try {
   execSync('which tmux', { stdio: 'ignore' });
   // Also check tmux is actually usable (not just present)
-  execSync('tmux list-sessions 2>/dev/null || tmux new-session -d -s __tmux_test 2>/dev/null && tmux kill-session -t __tmux_test 2>/dev/null', { stdio: 'ignore' });
+  execSync('tmux list-sessions 2>/dev/null || (tmux new-session -d -s __tmux_test 2>/dev/null && tmux kill-session -t __tmux_test 2>/dev/null)', { stdio: 'ignore' });
   tmuxAvailable = true;
 } catch { /* tmux missing or unusable */ }
 

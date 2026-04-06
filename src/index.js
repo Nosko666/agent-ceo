@@ -807,6 +807,7 @@ async function runChatroom(sessionId) {
 function recoverChatroom(sessionInfo) {
   const { RUNNING_DIR } = require('./menu');
   const sessionName = sessionInfo.sessionName;
+  const runningDir = path.join(RUNNING_DIR, sessionName);
 
   console.log(`\n  Recovering chatroom for session: ${sessionName}...\n`);
 
@@ -839,7 +840,8 @@ function recoverChatroom(sessionInfo) {
         const providerMatch = title.match(/^([a-z]+)\d+$/);
         const provider = providerMatch ? providerMatch[1] : 'unknown';
         const logFile = path.join(sessionLogDir, `${title}.log`);
-        agents[title] = { paneId, logFile, provider };
+        const codexHome = provider === 'codex' ? path.join(runningDir, title) : null;
+        agents[title] = { paneId, logFile, provider, codexHome };
       }
     }
   } catch { /* ignore */ }
@@ -1005,20 +1007,6 @@ async function recoverFromReboot(sessionInfo) {
 
     execSync(`tmux pipe-pane -t ${paneId} "cat >> ${logFile}"`);
 
-    // Use native resume args if sessionId exists, else fresh start
-    let cliArgs;
-    if (sessionId && provider.getResumeArgs) {
-      cliArgs = provider.getResumeArgs(sessionId);
-      printSystem(`  ${name}: resuming native session ${sessionId.substring(0, 8)}...`);
-    } else {
-      const newId = provider.generateSessionId ? provider.generateSessionId() : null;
-      cliArgs = provider.getStartArgs ? provider.getStartArgs(newId) : provider.startArgs;
-      if (newId) printSystem(`  ${name}: fresh session ${newId.substring(0, 8)}...`);
-      else printSystem(`  ${name}: fresh session`);
-      // Store the new ID
-      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId: newId, codexHome };
-    }
-
     // Per-agent CODEX_HOME for Codex agents in recovery
     let codexHome = null;
     let cmdPrefix = '';
@@ -1033,6 +1021,20 @@ async function recoverFromReboot(sessionInfo) {
         if (fs.existsSync(configSrc) && !fs.existsSync(path.join(codexHome, 'config.toml'))) fs.symlinkSync(configSrc, path.join(codexHome, 'config.toml'));
       } catch { /* ignore */ }
       cmdPrefix = `CODEX_HOME="${codexHome}" `;
+    }
+
+    // Use native resume args if sessionId exists, else fresh start
+    let cliArgs;
+    if (sessionId && provider.getResumeArgs) {
+      cliArgs = provider.getResumeArgs(sessionId);
+      printSystem(`  ${name}: resuming native session ${sessionId.substring(0, 8)}...`);
+    } else {
+      const newId = provider.generateSessionId ? provider.generateSessionId() : null;
+      cliArgs = provider.getStartArgs ? provider.getStartArgs(newId) : provider.startArgs;
+      if (newId) printSystem(`  ${name}: fresh session ${newId.substring(0, 8)}...`);
+      else printSystem(`  ${name}: fresh session`);
+      // Store the new ID
+      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId: newId, codexHome };
     }
 
     const cmd = `${cmdPrefix}${provider.command} ${cliArgs.join(' ')}`.trim();
