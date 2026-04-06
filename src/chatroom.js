@@ -362,8 +362,14 @@ class Chatroom {
       }
     }
 
-    // Save the prompt text so we can strip it from captured output later
-    const sentPromptText = fullPrompt;
+    // Generate unique response markers for clean extraction
+    const crypto = require('crypto');
+    const markerId = crypto.randomUUID().substring(0, 8);
+    const beginMarker = `AGENT_CEO_BEGIN_${markerId}`;
+    const endMarker = `AGENT_CEO_END_${markerId}`;
+
+    // Non-echoable, strict marker instruction
+    fullPrompt += `\n\nOutput EXACTLY:\n${beginMarker}\n<your answer>\n${endMarker}\nNothing before BEGIN or after END. Do not repeat these instructions.`;
 
     // Track tokens sent
     if (this.tokenTracker) this.tokenTracker.trackSent(agentName, fullPrompt);
@@ -381,42 +387,25 @@ class Chatroom {
     // Wait for response
     const result = await this.capture.waitForResponse(agentName);
 
-    // Clean the response: strip the input echo (we know what we sent)
-    // and provider-specific UI chrome
+    // Extract response between markers (last BEGIN → next END)
     if (result && result.text) {
-      let cleaned = result.text;
-
-      // Strip input echo: remove lines that match words from our sent prompt
-      // The prompt appears in the log because pipe-pane captures everything
-      const promptWords = sentPromptText.split(/\s+/).filter(w => w.length > 3);
-      const lines = cleaned.split('\n');
-      const cleanedLines = [];
-      let foundResponse = false;
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) { if (foundResponse) cleanedLines.push(line); continue; }
-
-        // Skip lines that are clearly input echo (contain prompt fragments)
-        const isEcho = !foundResponse && promptWords.length > 0 &&
-          promptWords.filter(w => trimmed.toLowerCase().includes(w.toLowerCase())).length >= 2;
-
-        // Skip known system instruction lines
-        const isSystem = trimmed.includes('SYSTEM: READ-ONLY') ||
-          trimmed.includes('SYSTEM: You have WRITE') ||
-          trimmed.includes('AGENT_CEO_') ||
-          trimmed.includes('ctrl+g to edit') ||
-          trimmed.includes('esc to interrupt') ||
-          trimmed.includes('Pasting text');
-
-        if (isEcho || isSystem) continue;
-
-        // Once we find a non-echo, non-system line, everything after is the response
-        if (!foundResponse && trimmed.length > 0) foundResponse = true;
-        if (foundResponse) cleanedLines.push(line);
+      const extracted = this._extractBetweenMarkers(result.text, beginMarker, endMarker);
+      if (extracted !== null) {
+        result.text = extracted;
+      } else {
+        // Markers missing — reprompt once: ask agent to re-output with markers only
+        this.paneManager.readNewOutput(agentName); // advance offset
+        this.paneManager.sendToPane(agentName,
+          `Output ONLY:\n${beginMarker}\n<your previous answer, repeated>\n${endMarker}`);
+        const retry = await this.capture.waitForResponse(agentName);
+        if (retry && retry.text) {
+          const retryExtracted = this._extractBetweenMarkers(retry.text, beginMarker, endMarker);
+          if (retryExtracted !== null) {
+            result.text = retryExtracted;
+          }
+          // If still no markers, keep the raw text (fallback — some output is better than none)
+        }
       }
-
-      result.text = cleanedLines.join('\n').trim();
     }
 
     // Process result
@@ -889,6 +878,41 @@ class Chatroom {
     printSystem(`Participants: ${participants.join(', ')}${roles.solo ? ' (solo mode)' : ''}`);
 
     await this.autoRunner.run(this);
+  }
+
+  // ── Response extraction ──────────────────────────────────
+
+  _extractBetweenMarkers(text, beginMarker, endMarker) {
+    // Use LAST BEGIN (first is input echo) → next END after it
+    const beginIdx = text.lastIndexOf(beginMarker);
+    if (beginIdx < 0) return null;
+
+    const afterBegin = beginIdx + beginMarker.length;
+    const endIdx = text.indexOf(endMarker, afterBegin);
+
+    let extracted;
+    if (endIdx >= 0) {
+      extracted = text.substring(afterBegin, endIdx);
+    } else {
+      // No END marker — take everything after last BEGIN
+      extracted = text.substring(afterBegin);
+    }
+
+    // Clean: remove marker lines, strip provider UI chrome that leaked between markers
+    extracted = extracted
+      .split('\n')
+      .filter(line => {
+        const t = line.trim();
+        if (t.includes('AGENT_CEO_BEGIN_') || t.includes('AGENT_CEO_END_')) return false;
+        if (t.includes('SYSTEM: READ-ONLY') || t.includes('SYSTEM: You have WRITE')) return false;
+        if (t.includes('ctrl+g to edit') || t.includes('esc to interrupt')) return false;
+        if (t.includes('Pasting text')) return false;
+        return true;
+      })
+      .join('\n')
+      .trim();
+
+    return extracted.length > 0 ? extracted : null;
   }
 
   // ── Journal snapshot ───────────────────────────────────
