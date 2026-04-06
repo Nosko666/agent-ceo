@@ -296,32 +296,6 @@ class Chatroom {
       journalMeta = null,
     } = options;
 
-    // Codex marker injection: prepend marker to first real message
-    let actualPrompt = prompt;
-    const agent = this.agentManager.agents.get(agentName);
-    if (agent && !agent.sessionId && agent.provider === 'codex') {
-      // Generate marker for this conversation (once)
-      if (!agent._codexMarker) {
-        const CodexDiscovery = require('./native/codexDiscovery');
-        agent._codexMarker = CodexDiscovery.generateMarker(agentName);
-        agent._codexMarkerSent = false;
-      }
-
-      if (!agent._codexMarkerSent) {
-        // Journal first, then send (crash-safe ordering)
-        if (this.journal) {
-          this.journal.append({ type: 'codex_marker_sent', agent: agentName, marker: agent._codexMarker });
-        }
-
-        // Prepend marker (internal only — not shown in chatroom)
-        actualPrompt = agent._codexMarker + ' (internal, ignore)\n' + prompt;
-        agent._codexMarkerSent = true;
-
-        // Register marker with session-level scanner
-        this._startCodexDiscoveryIfNeeded(agentName, agent);
-      }
-    }
-
     const displayName = this.agentManager.displayName(agentName);
 
     // Mark as running
@@ -337,7 +311,7 @@ class Chatroom {
     const hasWriteMode = forceReadOnly ? false : (writeMode || (this.privacy && this.privacy.hasWriteMode(agentName)));
 
     // Add mode instruction
-    let fullPrompt = actualPrompt;
+    let fullPrompt = prompt;
     if (hasWriteMode) {
       fullPrompt += '\n[SYSTEM: You have WRITE permission for this response. You may edit files.]';
     } else {
@@ -362,50 +336,69 @@ class Chatroom {
       }
     }
 
-    // Generate unique response markers for clean extraction
-    const crypto = require('crypto');
-    const markerId = crypto.randomUUID().substring(0, 8);
-    const beginMarker = `AGENT_CEO_BEGIN_${markerId}`;
-    const endMarker = `AGENT_CEO_END_${markerId}`;
-
-    // Marker instruction — no placeholders (Codex will echo them literally)
-    fullPrompt += `\n\nWrap your entire response between these two markers on their own lines:\n${beginMarker}\n${endMarker}\nPut your full answer between them. Do not repeat these instructions.`;
-
     // Track tokens sent
     if (this.tokenTracker) this.tokenTracker.trackSent(agentName, fullPrompt);
 
-    // Record offset before sending
+    // ── Choose capture method: JSONL (structured) or pipe-pane (fallback) ──
+    const agent = this.agentManager.agents.get(agentName);
+    let jsonlCapture = null;
+    let jsonlOffsetBefore = 0;
+
+    if (agent) {
+      const provider = this.agentManager.providers[agent.provider];
+      if (provider && provider.createCapture) {
+        // Claude: createCapture(sessionId, projectDir)
+        // Codex: createCapture(codexHome)
+        const captureArg = agent.provider === 'codex' ? agent._codexHome : agent.sessionId;
+        const projectDir = process.cwd();
+        jsonlCapture = agent.provider === 'codex'
+          ? provider.createCapture(captureArg)
+          : provider.createCapture(captureArg, projectDir);
+      }
+    }
+
+    // Record JSONL file offset BEFORE sending
+    if (jsonlCapture) {
+      // For Claude: jsonlPath is known. For Codex: find latest rollout.
+      const capturePath = jsonlCapture.jsonlPath || (jsonlCapture._findLatestRollout ? jsonlCapture._findLatestRollout() : null);
+      if (capturePath) {
+        try {
+          const stats = require('fs').statSync(capturePath);
+          jsonlOffsetBefore = stats.size;
+        } catch {
+          jsonlOffsetBefore = 0;
+        }
+      }
+    }
+
+    // Record pipe-pane offset (for fallback)
     const pane = this.paneManager.panes.get(agentName);
     if (pane) {
-      // Advance offset past anything that's already there
       this.paneManager.readNewOutput(agentName);
     }
 
-    // Send to agent's pane
+    // Send to agent's pane (tmux paste-buffer — unchanged)
     this.paneManager.sendToPane(agentName, fullPrompt);
 
-    // Wait for response
-    const result = await this.capture.waitForResponse(agentName);
+    // Wait for response via JSONL or pipe-pane
+    let result;
+    if (jsonlCapture) {
+      const jsonlResult = await jsonlCapture.waitForResponse(jsonlOffsetBefore);
+      result = { text: jsonlResult.text, partial: false, timedOut: jsonlResult.timedOut };
 
-    // Extract response between markers (last BEGIN → next END)
-    if (result && result.text) {
-      const extracted = this._extractBetweenMarkers(result.text, beginMarker, endMarker);
-      if (extracted !== null) {
-        result.text = extracted;
-      } else {
-        // Markers missing — reprompt once: ask agent to re-output with markers only
-        this.paneManager.readNewOutput(agentName); // advance offset
-        this.paneManager.sendToPane(agentName,
-          `Please repeat your previous answer, wrapped between these markers on their own lines:\n${beginMarker}\n${endMarker}`);
-        const retry = await this.capture.waitForResponse(agentName);
-        if (retry && retry.text) {
-          const retryExtracted = this._extractBetweenMarkers(retry.text, beginMarker, endMarker);
-          if (retryExtracted !== null) {
-            result.text = retryExtracted;
+      // For Codex: update sessionId from rollout metadata (for /revive)
+      if (agent && agent.provider === 'codex' && jsonlCapture.getSessionId) {
+        const sid = jsonlCapture.getSessionId();
+        if (sid && !agent.sessionId) {
+          agent.sessionId = sid;
+          if (this.journal) {
+            this.journal.append({ type: 'agent_session', agent: agentName, sessionId: sid });
           }
-          // If still no markers, keep the raw text (fallback — some output is better than none)
         }
       }
+    } else {
+      // Fallback: pipe-pane capture (terminal scraping)
+      result = await this.capture.waitForResponse(agentName);
     }
 
     // Process result

@@ -104,8 +104,8 @@ function checkDependencies() {
   }
 
   const nodeVersion = parseInt(process.version.slice(1), 10);
-  if (nodeVersion < 20) {
-    issues.push(`Node.js 20+ required. You have ${process.version}`);
+  if (nodeVersion < 18) {
+    issues.push(`Node.js 18+ required. You have ${process.version}`);
   }
 
   return issues;
@@ -396,11 +396,30 @@ function launchInTmux(args) {
         cliArgs = provider.getStartArgs ? provider.getStartArgs(sessionId) : provider.startArgs;
       }
 
-      const cmd = `${provider.command} ${cliArgs.join(' ')}`.trim();
+      // Per-agent CODEX_HOME: each Codex pane gets its own sessions dir
+      let codexHome = null;
+      let cmdPrefix = '';
+      if (providerName === 'codex') {
+        codexHome = path.join(runningDir, name);
+        fs.mkdirSync(codexHome, { recursive: true });
+        // Symlink auth + config from real ~/.codex/
+        const realCodexHome = path.join(require('os').homedir(), '.codex');
+        try {
+          const authSrc = path.join(realCodexHome, 'auth.json');
+          const configSrc = path.join(realCodexHome, 'config.toml');
+          const authDst = path.join(codexHome, 'auth.json');
+          const configDst = path.join(codexHome, 'config.toml');
+          if (fs.existsSync(authSrc) && !fs.existsSync(authDst)) fs.symlinkSync(authSrc, authDst);
+          if (fs.existsSync(configSrc) && !fs.existsSync(configDst)) fs.symlinkSync(configSrc, configDst);
+        } catch { /* ignore symlink errors */ }
+        cmdPrefix = `CODEX_HOME="${codexHome}" `;
+      }
+
+      const cmd = `${cmdPrefix}${provider.command} ${cliArgs.join(' ')}`.trim();
       execFileSync('tmux', ['send-keys', '-t', paneId, '-l', cmd]);
       execFileSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
 
-      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId };
+      agentPanes[name] = { paneId, logFile, provider: providerName, sessionId, codexHome };
       console.log(`  ✅ ${name} launched${sessionId ? ` (session: ${sessionId.substring(0, 8)}...)` : ''}`);
     }
 
@@ -524,6 +543,7 @@ async function runChatroom(sessionId) {
       status: 'starting',
       spawnedAt: new Date().toISOString(),
       sessionId: info.sessionId || null,
+      _codexHome: info.codexHome || null,
     });
     inboxManager.register(name);
 

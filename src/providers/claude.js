@@ -1,5 +1,7 @@
 const { execSync } = require('child_process');
 const crypto = require('crypto');
+const ClaudeCapture = require('../capture/claudeCapture');
+const { claudeJsonlPath } = require('../capture/jsonlReader');
 
 module.exports = {
   name: 'claude',
@@ -34,5 +36,11 @@ module.exports = {
   getResumeArgs(sessionId) {
     if (!sessionId) return this.startArgs;
     return ['--resume', sessionId];
+  },
+
+  createCapture(sessionId, projectDir) {
+    if (!sessionId || !projectDir) return null;
+    const jsonlPath = claudeJsonlPath(sessionId, projectDir);
+    return new ClaudeCapture(jsonlPath);
   },
 };

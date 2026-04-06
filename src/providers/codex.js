@@ -1,4 +1,5 @@
 const { execSync } = require('child_process');
+const CodexCapture = require('../capture/codexCapture');
 
 module.exports = {
   name: 'codex',
@@ -32,5 +33,12 @@ module.exports = {
   getResumeArgs(sessionId) {
     if (!sessionId) return this.startArgs;
     return ['resume', sessionId];
+  },
+
+  createCapture(codexHome) {
+    if (!codexHome) return null;
+    const fs = require('fs');
+    if (!fs.existsSync(codexHome)) return null;
+    return new CodexCapture(codexHome);
   },
 };
