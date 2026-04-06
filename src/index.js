@@ -338,9 +338,12 @@ function launchInTmux(args) {
       `tmux list-panes -t ${sessionName} -F "#{pane_id}" | head -1`
     ).toString().trim();
 
-    // Title pane 0 as chatroom
+    // Title pane 0 as chatroom and lock it
     try {
       execSync(`tmux select-pane -t ${pane0} -T "chatroom" 2>/dev/null`);
+    } catch { /* ignore */ }
+    try {
+      execSync(`tmux set-option -p -t ${pane0} allow-rename off 2>/dev/null`);
     } catch { /* ignore */ }
 
     // ── Create agent panes ───────────────────────────────
@@ -368,9 +371,12 @@ function launchInTmux(args) {
         `tmux split-window -t ${sessionName} ${cdFlag} -P -F "#{pane_id}"`
       ).toString().trim();
 
-      // Set pane title
+      // Set pane title and prevent agents from overriding it
       try {
         execSync(`tmux select-pane -t ${paneId} -T "${name}" 2>/dev/null`);
+      } catch { /* ignore */ }
+      try {
+        execSync(`tmux set-option -p -t ${paneId} allow-rename off 2>/dev/null`);
       } catch { /* ignore */ }
 
       // Start logging BEFORE starting the CLI

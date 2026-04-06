@@ -362,6 +362,15 @@ class Chatroom {
       }
     }
 
+    // Generate unique response markers for clean extraction
+    const crypto = require('crypto');
+    const markerId = crypto.randomUUID().substring(0, 8);
+    const beginMarker = `AGENT_CEO_RESPONSE_BEGIN_${markerId}`;
+    const endMarker = `AGENT_CEO_RESPONSE_END_${markerId}`;
+
+    // Append marker instructions to the prompt
+    fullPrompt += `\n\nIMPORTANT: Start your response with exactly this line: ${beginMarker}\nEnd your response with exactly this line: ${endMarker}`;
+
     // Track tokens sent
     if (this.tokenTracker) this.tokenTracker.trackSent(agentName, fullPrompt);
 
@@ -377,6 +386,31 @@ class Chatroom {
 
     // Wait for response
     const result = await this.capture.waitForResponse(agentName);
+
+    // Extract clean response between markers (if present)
+    if (result && result.text) {
+      const beginIdx = result.text.lastIndexOf(beginMarker);
+      if (beginIdx >= 0) {
+        const afterBegin = beginIdx + beginMarker.length;
+        const endIdx = result.text.indexOf(endMarker, afterBegin);
+        if (endIdx >= 0) {
+          result.text = result.text.substring(afterBegin, endIdx).trim();
+        } else {
+          // END marker not found — take everything after last BEGIN
+          result.text = result.text.substring(afterBegin).trim();
+        }
+      }
+      // If no BEGIN marker found at all, fall through to existing _cleanResponse behavior
+
+      // Remove any remaining marker lines
+      if (result.text) {
+        result.text = result.text
+          .split('\n')
+          .filter(line => !line.includes('AGENT_CEO_RESPONSE_BEGIN_') && !line.includes('AGENT_CEO_RESPONSE_END_'))
+          .join('\n')
+          .trim();
+      }
+    }
 
     // Process result
     this.agentManager.setStatus(agentName, 'idle');

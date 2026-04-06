@@ -97,10 +97,13 @@ class PaneManager {
       `tmux split-window -t ${this.sessionName} -${direction === 'right' ? 'h' : 'v'} -p ${percent} -P -F "#{pane_id}"`
     ).toString().trim();
 
-    // Set pane title
+    // Set pane title and prevent agents from overriding it
     try {
       execSync(`tmux select-pane -t ${paneId} -T "${agentName}"`);
     } catch { /* older tmux may not support titles */ }
+    try {
+      execSync(`tmux set-option -p -t ${paneId} allow-rename off 2>/dev/null`);
+    } catch { /* ignore */ }
 
     // Start logging BEFORE starting the CLI to capture all output
     execSync(`tmux pipe-pane -t ${paneId} "cat >> ${logFile}"`);
