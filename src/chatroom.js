@@ -369,7 +369,7 @@ class Chatroom {
     const endMarker = `AGENT_CEO_RESPONSE_END_${markerId}`;
 
     // Append marker instructions to the prompt
-    fullPrompt += `\n\nIMPORTANT: Start your response with exactly this line: ${beginMarker}\nEnd your response with exactly this line: ${endMarker}`;
+    fullPrompt += `\n\nIMPORTANT: Start your response with exactly this line: ${beginMarker}\nEnd your response with exactly this line: ${endMarker}\nBetween these markers, output only plain text — no headers, status lines, or UI elements.`;
 
     // Track tokens sent
     if (this.tokenTracker) this.tokenTracker.trackSent(agentName, fullPrompt);

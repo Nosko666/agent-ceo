@@ -299,6 +299,8 @@ class PaneManager {
 
   stripAnsi(text) {
     return text
+      // FIRST: convert cursor-forward to spaces (Claude Code uses \x1b[NC instead of literal spaces)
+      .replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(parseInt(n, 10) || 1))
       .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')    // CSI sequences (including ?-prefixed like \x1b[?2004h)
       .replace(/\x1b\][^\x07]*\x07/g, '')         // OSC sequences (title changes etc.)
       .replace(/\x1b\[>[0-9;]*[a-zA-Z]/g, '')     // private mode CSI (>1u etc.)

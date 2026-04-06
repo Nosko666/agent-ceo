@@ -8,7 +8,12 @@ module.exports = {
   command: 'codex',
   startArgs: [],
   promptPattern: /[>$]\s*$/m,
-  stripPatterns: [],
+  stripPatterns: [
+    /^›.*$/gm,                          // Codex prompt/command hints (›Implement, ›Use /skills)
+    /^.*gpt-[\d.]+.*left.*$/gm,         // Status bar (gpt-5.4 xhigh · 100% left · /path)
+    /^[•●]\s*(Working|Explored|Searching).*$/gm, // Progress indicators
+    /^\s*esc to interrupt\s*$/gm,        // Interrupt hint
+  ],
   startupDelay: 4000,
   exitCommand: 'exit',
 
